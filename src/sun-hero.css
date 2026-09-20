@@ -1,0 +1,62 @@
+/* Sun hero: a single dithered sun on the shared grid ground. Everything is
+   position:fixed and driven from SunHero.jsx's render loop; the scroll
+   distance itself comes from the section height. */
+
+.sun-hero-stack {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.comet-canvas,
+.sun-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.sun-title-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  /* The hollow reaches much further right than the sun's own outer edge
+     suggests (see CUT_DIST/CUT_R in SunHero.jsx — the ribbon itself only
+     starts at ~74% of the way from the sun's centre to its rim). Pulled in
+     to sit inside that hollow rather than past the disc's outer boundary —
+     eased back a bit further left of the ribbon itself so there's a wider
+     column for the text to sit in without crowding it. */
+  padding-left: clamp(180px, 34vw, 460px);
+  padding-right: 24px;
+  pointer-events: none;
+}
+
+.sun-title {
+  margin: 0;
+  max-width: 12ch;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 500;
+  font-size: clamp(30px, 4.6vw, 76px);
+  line-height: 0.98;
+  letter-spacing: -0.03em;
+  color: #fff;
+  transform-origin: left center;
+  will-change: opacity, transform;
+}
+
+/* Narrow screens: the sun sits centred below, so the title moves to the top
+   rather than over the brightest part of it. */
+@media (max-width: 900px) {
+  .sun-title-wrap {
+    align-items: flex-start;
+    padding-top: clamp(64px, 12vh, 120px);
+    padding-left: 24px;
+  }
+
+  .sun-title {
+    max-width: 14ch;
+    font-size: clamp(36px, 8.6vw, 64px);
+  }
+}
