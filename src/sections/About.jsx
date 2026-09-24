@@ -1,58 +1,100 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { ABOUT, PHOTOS } from "../data/about";
-import { ACCENT, GROUND } from "../theme";
+import { ABOUT, CONTACT, PHOTOS } from "../data/about";
+import { ACCENT } from "../theme";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
+import "../about.css";
+import { RUNNER_FRAMES } from "../components/runner";
 
 /**
- * ABOUT — a planet whose crust is photographs.
+ * ABOUT — fly into a world made of dust and find the moments it was made of.
  *
- * Scrolling pulls every photo in from deep space and lands it on its own
- * patch of a sphere, one wave after another, until the tiles close over
- * each other and the thing stops reading as a swarm and starts reading as
- * a world. Then it just turns.
+ *  1. A sphere of fine, cool dust turns slowly under the title.
+ *  2. Scrolling flies the camera at it until it's far bigger than the
+ *     screen. As it looms, the dust thins out speck by speck — it dissolves
+ *     rather than exploding — and what's left of it scatters into the
+ *     starfield, drifting gently, that the rest of the section sits on.
+ *  3. Inside it all along was a ring of photos. They show first as tiny
+ *     coloured specks within the sphere's outline, then spread and grow as
+ *     the camera flies into them, and keep turning slowly in 3D, nearer
+ *     ones larger. The story plays out in the middle one paragraph at a
+ *     time, and the page ends on a contact screen.
  *
- * What makes it a planet rather than the usual cloud-of-billboards version
- * of this effect, in rough order of how much each one matters:
+ * How the pieces split:
  *
- *  1. Tiles lie ON the surface — each one is oriented by its own surface
- *     normal and curved to the sphere (see makeTileGeometry), instead of
- *     facing the camera. Billboards always betray themselves the moment
- *     the group turns: every card pivots to follow you, so the sphere
- *     shears instead of rotating.
- *  2. There's a solid body underneath. Backface culling plus an opaque
- *     core means the far side is genuinely hidden — you see a lit ball,
- *     not a translucent lantern with cards floating inside it.
- *  3. One directional sun, no fill. The terminator is the whole illusion;
- *     a uniformly lit sphere flattens into a disc (same note as Experience).
- *     Tiles are MeshStandard, so they take that light like real terrain.
- *  4. A fresnel atmosphere that's brightest on the sunward limb, so the
- *     edge glows off-centre rather than as an even halo ring.
+ *  - **Dust is one draw call.** Lighting and the dissolve are computed in
+ *    the vertex shader from a single uniform; each point carries its own
+ *    threshold, so it thins out unevenly instead of fading as a sheet.
+ *  - **Photos are DOM, projected by hand.** Each has a 3D position on a
+ *    tilted ring; every frame it's rotated and perspective-projected in a
+ *    few lines of maths, and the result written as a transform. That keeps
+ *    them sharp, round and hoverable while still moving as a 3D object.
+ *  - **The ring orbits around the words, not through them.** It turns
+ *    mostly about the view axis, so photos circle the copy rather than
+ *    sweeping across it; any that do drift behind it are dimmed.
  *
  * Driven by real document scroll through useScrollProgressRef — the single
- * timeline every section on this page reads. See Projects.jsx for why
- * nothing here touches the wheel.
+ * timeline every section on this page reads.
  */
 
-const SCROLL_LENGTH_VH = 440;
-
-const RADIUS = 2.25;
-const TILE_LIFT = 1.004; // tiles float a hair off the core so they never z-fight
-const TILE_ASPECT = 0.8; // portrait, like a photo print
-
-// The section runs in three acts, and these are the beats between them:
-//
-//   0             -> ASSEMBLY_END   tiles fly in and close into a planet
-//   ASSEMBLY_END  -> EXPLODE_START  it just turns, whole, and is looked at
-//   EXPLODE_START -> 1              it bursts, and the words are what's left
-//
-// The middle act is not dead space. Going straight from the last tile
-// landing to the blast gives the viewer nothing to lose — the planet has to
-// exist as a finished object for a beat before it's worth destroying.
-const ASSEMBLY_END = 0.4;
-const TILE_FLIGHT = 0.22; // each tile's own share of that window
-const EXPLODE_START = 0.6;
+const SCROLL_LENGTH_VH = 960;
 const SMOOTHING = 6;
+
+// Beats, as fractions of the section's scroll.
+const TITLE_OUT = [0.025, 0.085];
+// Arrival from Experience. Instead of a quick crossfade, this section fades
+// in over a full viewport of Experience's flight out, with its camera
+// starting ARRIVAL_DEPTH times further back and closing to the opening frame
+// as it does — so the globe comes up out of the dark ahead of Experience's
+// camera and grows as it's approached, and this section's own flight simply
+// carries on from there.
+const ARRIVAL = 1; // viewports
+const ARRIVAL_DEPTH = 3;
+const FLIGHT = [0.025, 0.385]; // camera: far off -> the sphere overfills the screen
+const DISSOLVE = [0.42, 1]; // share of the flight over which the dust thins out
+const CLOUD = [0.22, 0.435]; // camera flies into the photo ring
+// Scroll positions where each story paragraph, then the contact screen,
+// takes over — spread evenly from STORY_FROM to STORY_TO, however many
+// paragraphs there are. At this section length that's roughly one screen
+// of scrolling per paragraph.
+const STORY_FROM = 0.46;
+const STORY_TO = 0.92;
+// How long each beat needs on screen for its animation to finish — worked
+// out from the effects written into its copy, so adding a {magic|…} or a
+// {chase|…} to a paragraph automatically buys it the time it needs. The
+// scroll is held at the next paragraph's edge until this has elapsed (see
+// the scroll hold in the effect), and the progress tick fills over it.
+function dwellFor(text) {
+  const count = (type) => (text.match(new RegExp(`\\{${type}\\|`, "g")) || []).length;
+  const magic = count("magic") > 0;
+  const marks = count("mark");
+  let ms = 1500; // entrance + a beat to read
+  if (magic) ms = Math.max(ms, 2600);
+  if (marks) ms = Math.max(ms, (magic ? 1600 : 850) + 300 * marks + 700);
+  if (count("underline")) ms = Math.max(ms, 2300);
+  if (count("circle")) ms = Math.max(ms, 2600);
+  if (count("chase")) ms = Math.max(ms, 6500); // run + the catch, held a beat
+  if (/\{[^|}]+\}/.test(text)) ms = Math.max(ms, 1800); // the name's shine
+  return ms;
+}
+const STAGE_DWELL = [
+  ...ABOUT.story.map(dwellFor),
+  dwellFor(CONTACT.heading) + 400, // contact: let the icons land
+];
+const STAGE_COUNT = ABOUT.story.length + 1;
+const STAGE_AT = Array.from(
+  { length: STAGE_COUNT },
+  (_, i) => STORY_FROM + ((STORY_TO - STORY_FROM) * i) / (STAGE_COUNT - 1)
+);
+
+const RADIUS = 2.2;
+// Photo ring: virtual camera distance at the start and end of the fly-in.
+const CLOUD_FAR = 9;
+const CLOUD_NEAR = 2.3;
+// Gentle tilt: enough depth that near photos are bigger than far ones,
+// little enough that the ring still reads as a circle from the front.
+const RING_TILT_X = 0.28;
+const RING_TILT_Y = 0.18;
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -60,159 +102,468 @@ const smoothstep = (e0, e1, x) => {
   const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
 };
-// Steeper ease-out than smoothstep: tiles arrive fast and settle slowly,
-// which is what makes them feel caught by gravity rather than parked.
-const easeOut = (t) => 1 - Math.pow(1 - t, 3);
-// Barely eased on purpose. A real detonation is all over in its first
-// instants, and that's what a time-based one should do — but this one is
-// driven by the scroll wheel, where the viewer owns the clock. Front-load
-// it and the entire explosion is spent in the first few degrees of a
-// scroll that then has nothing left to show for the rest of its travel.
-// Just enough curve to give the launch a kick, then honest continuous
-// motion the whole way down.
-const easeBlast = (t) => Math.pow(t, 0.85);
 
-// Deterministic per-tile noise — the layout must be identical on every
-// reload, or the planet reshuffles itself each time the page is opened.
 function hash(i, seed) {
   const n = Math.sin(i * 127.1 + seed * 311.7) * 43758.5453;
   return n - Math.floor(n);
 }
 
-/**
- * Fibonacci lattice. Evenly spaces N points over a sphere with no clustering
- * at the poles — the failure mode of the obvious lat/long grid, where tiles
- * pile up top and bottom and leave the equator bare.
- */
-function fibonacciDirection(i, n) {
-  const y = 1 - (i / (n - 1)) * 2;
-  const r = Math.sqrt(Math.max(0, 1 - y * y));
-  const theta = i * Math.PI * (3 - Math.sqrt(5));
-  return new THREE.Vector3(Math.cos(theta) * r, y, Math.sin(theta) * r);
+const dustVertex = /* glsl */ `
+  uniform float uFade;
+  uniform float uScale;
+  uniform float uMax;
+  uniform float uTime;
+  uniform float uAspect;
+  attribute vec4 aRand; // x: survives as a star, y: size, z: brightness/phase, w: dissolve threshold
+  attribute vec3 aColor;
+  varying vec3 vColor;
+  varying float vAlpha;
+
+  void main() {
+    vec3 dir = normalize(position);
+    // About a sixth of the dust never dissolves: it becomes the stars. As
+    // the sphere thins, these scatter outward at their own rates — so the
+    // field that's left is the globe's own dust spread through space, not
+    // a separate backdrop — and then keep drifting for good.
+    float star = step(aRand.x, 0.17);
+    float settled = star * uFade;
+    float spread = mix(0.18, 0.5 + aRand.y * 2.8, star);
+    vec3 p = position * (1.0 + uFade * spread);
+    p += settled * 0.26 * vec3(
+      sin(uTime * 0.8 + aRand.z * 40.0),
+      cos(uTime * 0.68 + aRand.y * 40.0),
+      sin(uTime * 0.6 + aRand.w * 40.0)
+    );
+
+    // Most stars faint, a few bright — squared, so the bright ones are rare.
+    // That spread of brightness is what gives the reference its depth.
+    float bright = 0.45 + 0.55 * aRand.z * aRand.z;
+
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    float depth = -mv.z;
+    float size = uScale * (0.6 + aRand.y * 0.8) / max(depth, 0.001);
+    // Once scattered they're much further off and would shrink to nothing;
+    // held at a crisp speck instead — the brighter, the slightly bigger.
+    float starSize = max(size * 1.3, uMax * (0.45 + 0.4 * bright));
+    gl_PointSize = min(mix(size, starSize, settled), uMax);
+
+    // Lit from above with a bright limb, and bluer toward the top — the
+    // reference's sphere is ice-blue along its crown and near-white specks
+    // across a dark face.
+    vec3 nv = normalize(normalMatrix * dir);
+    float rim = 1.0 - abs(nv.z);
+    float top = smoothstep(-0.3, 1.0, nv.y);
+    float lit = 0.22 + 0.85 * top + 0.8 * rim * rim;
+    vColor = mix(aColor, vec3(0.42, 0.62, 1.0), top * 0.45);
+    // As stars they cool to one pale sky blue, not the sphere's deeper
+    // periwinkle — a consistent, soft tint with some near-white.
+    vColor = mix(vColor, mix(vec3(0.63, 0.78, 0.95), vec3(0.9, 0.94, 1.0), aRand.y * 0.5), settled * 0.8);
+
+    // The rest go each at their own moment, so it thins speck by speck.
+    float gone = (1.0 - star) * smoothstep(aRand.w * 0.85, aRand.w * 0.85 + 0.15, uFade);
+    // Stars lose the sphere's lighting — there's no ball left to light.
+    float shade = mix(lit, bright, settled);
+
+    float twinkle = 0.75 + 0.25 * sin(uTime * (0.8 + aRand.z * 2.0) + aRand.z * 40.0);
+    vAlpha = 0.95 * shade * twinkle * (1.0 - gone);
+    gl_Position = projectionMatrix * mv;
+
+    // A quieter pocket in the middle, where the words sit: stars there are
+    // thinned out (not just dimmed), so the centre reads as open space.
+    vec2 ndc = gl_Position.xy / gl_Position.w;
+    ndc.x *= uAspect;
+    float keep = smoothstep(0.08, 0.75, length(ndc));
+    vAlpha *= mix(1.0, step(aRand.w, 0.15 + 0.85 * keep) * mix(0.55, 1.0, keep), settled);
+  }
+`;
+
+// Crisp rather than soft: the reference dust is pin-sharp specks, and a
+// gaussian falloff at this size just reads as fog.
+const dustFragment = /* glsl */ `
+  varying vec3 vColor;
+  varying float vAlpha;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float a = (1.0 - smoothstep(0.32, 0.5, d)) * vAlpha;
+    if (a < 0.004) discard;
+    gl_FragColor = vec4(vColor, a);
+  }
+`;
+
+// Brand glyphs, drawn on a 24-unit grid in currentColor.
+const ICONS = {
+  instagram: (
+    <>
+      <rect x="3.5" y="3.5" width="17" height="17" rx="5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="17.2" cy="6.8" r="1.1" fill="currentColor" />
+    </>
+  ),
+  x: (
+    <>
+      <path d="M4.5 4h4.2l10.8 16h-4.2z" fill="currentColor" />
+      <path d="M19 4.2l-6 6.8M5 19.8l6-6.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ),
+  linkedin: (
+    <>
+      <rect x="3.5" y="3.5" width="17" height="17" rx="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M8.2 10.5v6M8.2 7.4v.1M11.8 16.5v-6M11.8 13.3c0-1.7 1-2.8 2.4-2.8s2.2 1 2.2 2.6v3.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </>
+  ),
+  substack: <path d="M5 4h14v2.2H5zM5 8h14v2.2H5zM5 12h14v8.5l-7-3.9-7 3.9z" fill="currentColor" />,
+  github: (
+    <path
+      d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"
+      fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+    />
+  ),
+  email: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3.5 7l8.5 6 8.5-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </>
+  ),
+};
+
+
+// ---------------------------------------------------------------------------
+// Inline effects in the copy — see the key in data/about.js. All of them are
+// CSS/SVG keyed off the enclosing .about-stage.is-in, so each plays as its
+// paragraph arrives and resets when it leaves (and replays on the way back).
+// ---------------------------------------------------------------------------
+
+// {type|text} or {text}; split() with two capture groups yields
+// [plain, type, content, plain, type, content, …].
+const FX = /\{(?:(\w+)\|)?(.+?)\}/;
+
+// "magic" assembles out of dots. As its paragraph comes in, a scattered
+// cloud of burnt-orange dots over the word flies into place — each dot
+// finds its row first and then slides along it, so the rows sweep in
+// sideways, left to right, and lock into a fine dot-matrix of the letters.
+// Then the dots dissolve into the solid word in the same orange, which is
+// what stays: the dots are the transition, the text is the resting state,
+// so it reads as cleanly as the words around it.
+//
+// The grid is sampled from the word itself, drawn in its own computed font,
+// so the dot letters sit exactly where the solid ones then appear. The
+// word's colour change is plain CSS, so it can't be left invisible.
+const MAGIC_PAD = 14; // room for the scattered cloud around the word
+const MAGIC_INK = "#e0602a";
+
+function MagicWord({ active, children }) {
+  const textRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const text = textRef.current;
+    const canvas = canvasRef.current;
+    if (!text || !canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    let raf = 0;
+
+    // Lay out the canvas and sample the word into a dot grid.
+    const build = () => {
+      const w = text.offsetWidth;
+      const h = text.offsetHeight;
+      if (!w || !h) return null;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const cw = w + MAGIC_PAD * 2;
+      const ch = h + MAGIC_PAD * 2;
+      canvas.width = Math.ceil(cw * dpr);
+      canvas.height = Math.ceil(ch * dpr);
+      canvas.style.width = `${cw}px`;
+      canvas.style.height = `${ch}px`;
+
+      const cs = getComputedStyle(text);
+      const fontSize = parseFloat(cs.fontSize) || 24;
+      const off = document.createElement("canvas");
+      off.width = Math.ceil(w);
+      off.height = Math.ceil(h);
+      const octx = off.getContext("2d", { willReadFrequently: true });
+      octx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      if ("letterSpacing" in octx) octx.letterSpacing = cs.letterSpacing;
+      const m = octx.measureText(text.textContent);
+      const asc = m.fontBoundingBoxAscent || fontSize * 0.8;
+      const desc = m.fontBoundingBoxDescent || fontSize * 0.2;
+      octx.fillStyle = "#fff";
+      octx.fillText(text.textContent, 0, (h - (asc + desc)) / 2 + asc);
+      const data = octx.getImageData(0, 0, off.width, off.height).data;
+
+      // A regular grid; a dot wherever its cell centre falls inside a glyph.
+      // Fine enough that the word is legible while it's still dots.
+      const step = Math.max(1.6, fontSize / 14);
+      const ox = MAGIC_PAD + text.offsetLeft;
+      const oy = MAGIC_PAD + text.offsetTop;
+      const dots = [];
+      for (let y = step / 2; y < off.height; y += step) {
+        for (let x = step / 2; x < off.width; x += step) {
+          if (data[(Math.floor(y) * off.width + Math.floor(x)) * 4 + 3] > 120) {
+            dots.push({
+              tx: ox + x,
+              ty: oy + y,
+              // Scattered anywhere over the word's box (and a little past it).
+              sx: MAGIC_PAD * 0.4 + Math.random() * (cw - MAGIC_PAD * 0.8),
+              sy: MAGIC_PAD * 0.5 + Math.random() * (ch - MAGIC_PAD),
+              // Left to right sweep, with a little jitter so it isn't a wipe.
+              delay: (x / w) * 0.3 + Math.random() * 0.18,
+            });
+          }
+        }
+      }
+      return { dpr, cw, ch, r: step * 0.36, dots };
+    };
+
+    const drawAt = (g, t) => {
+      ctx.setTransform(g.dpr, 0, 0, g.dpr, 0, 0);
+      ctx.clearRect(0, 0, g.cw, g.ch);
+      ctx.fillStyle = MAGIC_INK;
+      const clamp = (v) => Math.min(1, Math.max(0, v));
+      const easeOut = (v) => 1 - Math.pow(1 - v, 3);
+      const easeInOut = (v) => (v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2);
+      // Cloud fades up, each dot travels over 0.75s after its delay, and
+      // once they've all settled they hand over to the solid word (whose
+      // colour fades in over the same window, in CSS).
+      const appear = clamp(t / 0.25) * (1 - clamp((t - HANDOFF) / 0.4));
+      for (const d of g.dots) {
+        const raw = clamp((t - 0.2 - d.delay) / 0.75);
+        // Rows first, then along them: y settles on a fast ease, x on a
+        // slower one — that's what makes the rows slide in sideways.
+        const ky = easeOut(clamp(raw * 1.7));
+        const kx = easeInOut(raw);
+        const x = d.sx + (d.tx - d.sx) * kx;
+        const y = d.sy + (d.ty - d.sy) * ky;
+        // Scattered dots read slightly dimmer and smaller than set ones.
+        ctx.globalAlpha = appear * (0.55 + 0.45 * raw);
+        ctx.beginPath();
+        ctx.arc(x, y, g.r * (0.8 + 0.2 * raw), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    const SETTLED = 0.2 + 0.48 + 0.75; // last dot has settled
+    const HANDOFF = SETTLED - 0.05; // matches the CSS colour transition
+    const END = HANDOFF + 0.4; // dots gone; the solid word remains
+    const geo = build();
+    if (!geo) return;
+
+    if (!active) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    } else if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const t0 = performance.now();
+      const frame = (now) => {
+        const t = (now - t0) / 1000;
+        drawAt(geo, Math.min(t, END));
+        if (t < END) raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+  }, [active]);
+
+  return (
+    <>
+      <span ref={textRef} className="about-fx-magic__text">
+        {children}
+      </span>
+      <canvas
+        ref={canvasRef}
+        className="about-fx-magic__swarm"
+        style={{ left: -MAGIC_PAD, top: -MAGIC_PAD, width: 0, height: 0 }}
+        aria-hidden="true"
+      />
+    </>
+  );
 }
 
-/**
- * A curved patch rather than a flat card. Each plane vertex is pushed out
- * onto the sphere of radius R, then pulled back to the origin so the mesh
- * can be positioned and rotated normally. Flat tiles on a sphere this size
- * leave visible facets — the silhouette comes out as a polygon and the
- * seams between neighbours gap open as they tilt away from each other.
- */
-function makeTileGeometry(w, h, R) {
-  const geo = new THREE.PlaneGeometry(w, h, 6, 6);
-  const pos = geo.attributes.position;
-  const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.set(pos.getX(i), pos.getY(i), R).setLength(R);
-    pos.setXYZ(i, v.x, v.y, v.z - R);
-  }
-  pos.needsUpdate = true;
-  geo.computeVertexNormals();
-  return geo;
+// The doodled stick figure — see components/runner.js.
+
+// The last frame of the chase. The runner never reaches back — he's caught
+// mid-stride, frozen in his usual running pose. The chaser has lunged in
+// and hooked an arm over his neck: shoulder, up over the runner's
+// shoulder, and a little curl down in front of his neck. The CSS parks the
+// chaser's box 9 viewBox units behind the runner's, which is exactly where
+// that hand lands on the runner's neck (his x ≈ 12.8, y ≈ 8.8).
+const CAUGHT = {
+  chaser:
+    "M12.8 8.6 11 18M12.2 11.2 17.2 9.4 21.6 8.4 23.4 10.2M12 11.5 9 14.4 7.8 17.4M11 18 14.6 22.8 16.2 29.4M11 18 8.4 23.4 5.6 28.6",
+  lead: RUNNER_FRAMES[0],
+};
+
+// Where the catch happens: under this word in the phrase (its centre is
+// measured from the laid-out text, so it holds at any size or font).
+const CATCH_WORD = "feeling";
+
+function ChaseTrack() {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const track = ref.current;
+    const host = track?.closest(".about-fx-chase");
+    const textNode = host?.firstChild;
+    if (!host || !textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+    const measure = () => {
+      const idx = textNode.textContent.indexOf(CATCH_WORD);
+      const box = host.getBoundingClientRect();
+      let centre = box.width / 2;
+      if (idx >= 0) {
+        const range = document.createRange();
+        range.setStart(textNode, idx);
+        range.setEnd(textNode, idx + CATCH_WORD.length);
+        const r = range.getBoundingClientRect();
+        centre = r.left + r.width / 2 - box.left;
+      }
+      // Both boxes share the stage's transform, so the offset is exact.
+      host.style.setProperty("--catch", `${centre.toFixed(1)}px`);
+    };
+    measure();
+    document.fonts?.ready.then(measure);
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+  return (
+    <span ref={ref} className="about-chase__track">
+      <Runner role="lead" />
+      <Runner role="chaser" />
+    </span>
+  );
 }
 
-/**
- * Generated stand-in for a real photograph. Deliberately not a flat grey
- * box: the globe's texture at a distance comes from tiles differing in
- * tone, so uniform placeholders would hide exactly the quality being built
- * here. Each one gets its own hue, vignette and grain, plus a soft figure
- * so the tiles read as portraits at a glance.
- */
-function makePlaceholderTexture(index, caption) {
-  const w = 256;
-  const h = Math.round(w / TILE_ASPECT);
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
+function Runner({ role }) {
+  return (
+    <svg className={`about-runner about-runner--${role}`} viewBox="0 0 24 32" aria-hidden="true">
+      <g filter="url(#about-boil)">
+        <circle cx="13.4" cy="5.2" r="3.1" />
+        <g className="about-runner__run">
+          {RUNNER_FRAMES.map((d, i) => (
+            <path key={i} className={`about-runner__f${i}`} d={d} />
+          ))}
+        </g>
+        <path className="about-runner__caught" d={CAUGHT[role]} />
+      </g>
+    </svg>
+  );
+}
 
-  // Warm sand through to cold slate, cycled so neighbours rarely match.
-  const hue = 18 + ((index * 47) % 210);
-  const sat = 15 + hash(index, 2) * 18;
-  const light = 34 + hash(index, 3) * 20;
-
-  const bg = ctx.createLinearGradient(0, 0, w * 0.4, h);
-  bg.addColorStop(0, `hsl(${hue}, ${sat}%, ${light + 12}%)`);
-  bg.addColorStop(1, `hsl(${hue + 16}, ${sat}%, ${Math.max(8, light - 14)}%)`);
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, w, h);
-
-  // Horizon band — the single cue that reads as "photograph of somewhere"
-  // rather than "swatch", even at four pixels across on the far limb.
-  const horizon = h * (0.52 + hash(index, 5) * 0.16);
-  const ground = ctx.createLinearGradient(0, horizon, 0, h);
-  ground.addColorStop(0, `hsla(${hue + 30}, ${sat + 8}%, ${light - 10}%, 0.95)`);
-  ground.addColorStop(1, `hsla(${hue + 30}, ${sat + 4}%, ${Math.max(5, light - 22)}%, 1)`);
-  ctx.fillStyle = ground;
-  ctx.fillRect(0, horizon, w, h - horizon);
-
-  // Figure: head and shoulders, sitting on the horizon.
-  const cx = w * (0.34 + hash(index, 7) * 0.32);
-  const headR = w * 0.085;
-  const headY = horizon - h * 0.12;
-  ctx.fillStyle = `hsla(${hue + 45}, ${sat + 10}%, ${Math.min(82, light + 34)}%, 0.85)`;
-  ctx.beginPath();
-  ctx.arc(cx, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(cx - headR * 2.1, horizon + h * 0.03);
-  ctx.quadraticCurveTo(cx, headY + headR * 0.6, cx + headR * 2.1, horizon + h * 0.03);
-  ctx.closePath();
-  ctx.fill();
-
-  // Grain, then a vignette — in that order, so the corners darken the
-  // noise too and the tile doesn't look like a sticker with speckle on top.
-  ctx.globalAlpha = 0.05;
-  for (let i = 0; i < 700; i++) {
-    ctx.fillStyle = hash(index * 91 + i, 11) > 0.5 ? "#fff" : "#000";
-    ctx.fillRect(hash(i, index + 1) * w, hash(i, index + 31) * h, 1.5, 1.5);
+function Fx({ type, order, active, children }) {
+  switch (type) {
+    case "magic":
+      return (
+        <span className="about-fx about-fx-magic">
+          <MagicWord active={active}>{children}</MagicWord>
+        </span>
+      );
+    case "chase":
+      // The sketchy underline; once it's drawn, two doodled figures run
+      // along beneath it, one chasing the other, until — right under the
+      // last word, "feeling" — the chaser catches the runner with an arm over
+      // his neck. And that's where it ends.
+      return (
+        <span className="about-fx about-fx-underline about-fx-chase">
+          {children}
+          <svg viewBox="0 0 200 16" preserveAspectRatio="none" aria-hidden="true">
+            <path pathLength="1" d="M3 9C38 4 70 12 104 8S170 3 197 7" />
+            <path pathLength="1" d="M10 13C52 9 96 15 140 11S184 10 194 11" />
+          </svg>
+          <span className="about-chase" aria-hidden="true">
+            {/* Hand-drawn "line boil": the displacement noise re-seeds a few
+                times a second, so the strokes jitter like frames of a
+                flipbook. */}
+            <svg width="0" height="0" style={{ position: "absolute" }}>
+              <filter id="about-boil">
+                <feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="2" seed="1">
+                  <animate attributeName="seed" values="1;4;7;2" dur="0.5s" calcMode="discrete" repeatCount="indefinite" />
+                </feTurbulence>
+                <feDisplacementMap in="SourceGraphic" scale="1.1" />
+              </filter>
+            </svg>
+            <ChaseTrack />
+          </span>
+        </span>
+      );
+    case "mark":
+      return (
+        <span className="about-fx about-fx-mark" style={{ "--o": order }}>
+          {children}
+        </span>
+      );
+    case "underline":
+      // Two slightly different wobbly strokes, the second drawn just after
+      // the first — the double pass is what makes it read as hand-drawn.
+      return (
+        <span className="about-fx about-fx-underline">
+          {children}
+          <svg viewBox="0 0 200 16" preserveAspectRatio="none" aria-hidden="true">
+            <path pathLength="1" d="M3 9C38 4 70 12 104 8S170 3 197 7" />
+            <path pathLength="1" d="M10 13C52 9 96 15 140 11S184 10 194 11" />
+          </svg>
+        </span>
+      );
+    case "circle":
+      // A loose, overshooting loop — starts left of centre, goes round, and
+      // runs past its own start, the way a pen circles a word.
+      return (
+        <span className="about-fx about-fx-circle">
+          {children}
+          <svg viewBox="0 0 200 70" preserveAspectRatio="none" aria-hidden="true">
+            <path
+              pathLength="1"
+             
+              d="M62 12C120 2 186 8 194 30 201 52 150 66 96 65 42 64 4 54 6 34 8 16 46 7 88 6 112 6 132 8 148 13"
+            />
+          </svg>
+        </span>
+      );
+    default:
+      return <span className="about-name">{children}</span>;
   }
-  ctx.globalAlpha = 1;
+}
 
-  const vig = ctx.createRadialGradient(w / 2, h / 2, w * 0.2, w / 2, h / 2, w * 0.78);
-  vig.addColorStop(0, "rgba(0,0,0,0)");
-  vig.addColorStop(1, "rgba(0,0,0,0.3)");
-  ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, w, h);
-
-  ctx.font = "600 15px 'Courier New', monospace";
-  ctx.fillStyle = "rgba(255,255,255,0.6)";
-  ctx.fillText(caption, 14, h - 16);
-
-  // A hairline inset frame — reads as the white border of a print and, more
-  // usefully, keeps adjacent tiles legible as separate photos once they
-  // close up into a continuous crust.
-  ctx.strokeStyle = "rgba(255,255,255,0.22)";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(5, 5, w - 10, h - 10);
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+function Rich({ text, active }) {
+  const parts = text.split(FX);
+  const out = [];
+  let order = 0;
+  for (let i = 0; i < parts.length; i += 3) {
+    if (parts[i]) out.push(parts[i]);
+    if (i + 2 < parts.length) {
+      out.push(
+        <Fx key={i} type={parts[i + 1]} order={order++} active={active}>
+          {parts[i + 2]}
+        </Fx>
+      );
+    }
+  }
+  return out;
 }
 
 export default function About() {
   const sectionRef = useRef(null);
   const stackRef = useRef(null);
   const mountRef = useRef(null);
-  const copyRef = useRef(null);
+  const titleRef = useRef(null);
+  const metaRef = useRef(null);
   const hintRef = useRef(null);
-  const revealRef = useRef(null);
-  const paraRefs = useRef([]);
-  const counterRef = useRef(null);
+  const coreRef = useRef(null);
+  const stagesRef = useRef(null);
+  const bubbleRefs = useRef([]);
+  const imgRefs = useRef([]);
+  const stageRef = useRef(-1);
+  const hoverRef = useRef(false);
 
-  const { progressRef, entryRef } = useScrollProgressRef(sectionRef);
+  const { progressRef, entryRef } = useScrollProgressRef(sectionRef, ARRIVAL);
 
-  const [ready, setReady] = useState(false);
   const [everActive, setEverActive] = useState(false);
+  const [stage, setStage] = useState(-1);
+  const [openIndex, setOpenIndex] = useState(null);
   const activeRef = useRef(false);
   const rafIdRef = useRef(null);
   const tickRef = useRef(null);
 
-  // Same deferral as Projects and Experience: no WebGL context, no textures
-  // and no render loop until this section is actually within reach of the
-  // viewport. It's the last section on the page, so without this it would
-  // be building a scene nobody has scrolled to yet during first paint.
   useEffect(() => {
     const el = sectionRef.current;
     if (!el) return;
@@ -232,587 +583,405 @@ export default function About() {
     return () => io.disconnect();
   }, []);
 
+  // Lightbox closes on Escape, and on any scroll — the page moving under an
+  // open photo would otherwise leave it floating over the wrong section.
+  useEffect(() => {
+    if (openIndex == null) return;
+    const close = () => setOpenIndex(null);
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, { passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close);
+    };
+  }, [openIndex]);
+
   useEffect(() => {
     if (!everActive) return;
     const mount = mountRef.current;
     let width = mount.clientWidth;
     let height = mount.clientHeight;
 
-    // -------------------------------------------------------------
-    // Scene — transparent clear colour so the shared .space-ground grid
-    // shows through, exactly as the two sections before it do.
-    // -------------------------------------------------------------
+    const LOW_POWER =
+      width < 760 ||
+      (navigator.hardwareConcurrency || 8) <= 4 ||
+      window.matchMedia("(pointer: coarse)").matches;
+    const DUST_COUNT = LOW_POWER ? 12000 : 24000;
+    const pixelRatio = Math.min(window.devicePixelRatio, LOW_POWER ? 1.5 : 2);
+
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(GROUND, 0.055);
-
-    // near=1.5, not the reflexive 0.1. Depth precision is distributed
-    // hyperbolically between near and far, so a needlessly close near plane
-    // spends almost the entire depth buffer on empty space in front of the
-    // subject — which is what was letting overlapping tiles z-fight into
-    // speckled triangles. Nothing here is ever closer than ~4 units.
-    const camera = new THREE.PerspectiveCamera(42, width / height, 1.5, 80);
-    camera.position.set(0, 0, 7.4);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.05, 200);
+    const renderer = new THREE.WebGLRenderer({ antialias: !LOW_POWER, alpha: true });
     renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(width, height);
     mount.appendChild(renderer.domElement);
 
     // -------------------------------------------------------------
-    // Starfield — same shell of points as Experience, so this reads as the
-    // next stop in one continuous flight rather than a new scene.
+    // Dust sphere
     // -------------------------------------------------------------
-    const STAR_COUNT = 1100;
-    const starGeo = new THREE.BufferGeometry();
-    const starPos = new Float32Array(STAR_COUNT * 3);
-    const starCol = new Float32Array(STAR_COUNT * 3);
-    const white = new THREE.Color(0xffffff);
-    const gray = new THREE.Color(0x8a8a90);
-    const red = new THREE.Color(ACCENT);
-    for (let i = 0; i < STAR_COUNT; i++) {
-      const r = 24 + Math.random() * 20;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
-      starPos[i * 3 + 1] = r * Math.cos(phi);
-      starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
-      const t = Math.random();
-      const c = t < 0.05 ? red : t < 0.4 ? gray : white;
-      starCol[i * 3] = c.r; starCol[i * 3 + 1] = c.g; starCol[i * 3 + 2] = c.b;
+    const pos = new Float32Array(DUST_COUNT * 3);
+    const rand = new Float32Array(DUST_COUNT * 4);
+    const col = new Float32Array(DUST_COUNT * 3);
+    // The reference palette: periwinkle, ice blue, white, a little mint.
+    const palette = [
+      [0.34, new THREE.Color(0x6f9cf0)],
+      [0.3, new THREE.Color(0xa9c6ff)],
+      [0.26, new THREE.Color(0xf2f6ff)],
+      [0.1, new THREE.Color(0xbff7e6)],
+    ];
+    for (let i = 0; i < DUST_COUNT; i++) {
+      const u = Math.random() * 2 - 1;
+      const a = Math.random() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      const r = Math.random() < 0.92
+        ? RADIUS * (1 - Math.pow(Math.random(), 3) * 0.06)
+        : RADIUS * Math.cbrt(Math.random()) * 0.95;
+      pos[i * 3] = Math.cos(a) * s * r;
+      pos[i * 3 + 1] = u * r;
+      pos[i * 3 + 2] = Math.sin(a) * s * r;
+      rand.set([Math.random(), Math.random(), Math.random(), Math.random()], i * 4);
+      let t = Math.random();
+      let c = palette[0][1];
+      for (const [w, pc] of palette) { if (t < w) { c = pc; break; } t -= w; }
+      col.set([c.r, c.g, c.b], i * 3);
     }
-    starGeo.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
-    starGeo.setAttribute("color", new THREE.BufferAttribute(starCol, 3));
-    const starMat = new THREE.PointsMaterial({
-      size: 0.085, vertexColors: true, transparent: true, opacity: 0.8,
-      sizeAttenuation: true, depthWrite: false,
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    dustGeo.setAttribute("aRand", new THREE.BufferAttribute(rand, 4));
+    dustGeo.setAttribute("aColor", new THREE.BufferAttribute(col, 3));
+    const dustMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uFade: { value: 0 },
+        uScale: { value: 0 },
+        uMax: { value: 0 },
+        uTime: { value: 0 },
+        uAspect: { value: 1 },
+      },
+      vertexShader: dustVertex,
+      fragmentShader: dustFragment,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
-    const stars = new THREE.Points(starGeo, starMat);
-    scene.add(stars);
+    const dust = new THREE.Points(dustGeo, dustMat);
+    dust.rotation.z = 0.12;
+    scene.add(dust);
 
     // -------------------------------------------------------------
-    // Lighting — one sun, almost no fill. Everything below is shaped by it.
-    // -------------------------------------------------------------
-    const SUN_DIR = new THREE.Vector3(-5.5, 2.2, 3.6);
-    // Ambient is higher than Experience's planet wants, on purpose: that
-    // one only has to read as rock, this one has to keep photographs
-    // legible all the way round the terminator.
-    scene.add(new THREE.AmbientLight(0xffffff, 0.3));
-    const sun = new THREE.DirectionalLight(0xfff0dc, 2.9);
-    sun.position.copy(SUN_DIR);
-    scene.add(sun);
-    // A dim cool bounce from the opposite side so the night hemisphere is
-    // dark rather than a black cut-out — the same trick earthrise photos
-    // get for free from reflected light.
-    const bounce = new THREE.DirectionalLight(0x4a6ea8, 0.5);
-    bounce.position.set(5, -2, -4);
-    scene.add(bounce);
-
-    // -------------------------------------------------------------
-    // The planet: a group holding the body, the atmosphere and every tile,
-    // tilted on its axis and turned as one.
-    // -------------------------------------------------------------
-    const planet = new THREE.Group();
-    planet.rotation.z = -0.28; // axial tilt, so the spin isn't a flat spin
-    scene.add(planet);
-
-    // -------------------------------------------------------------
-    // Framing. A fixed camera distance only ever frames one aspect ratio:
-    // tuned on a desktop it looks right there and buries a phone inside the
-    // planet, because a portrait viewport's *horizontal* field of view is
-    // far narrower than its vertical one. So solve for the distance that
-    // fits the sphere instead of hard-coding one.
-    // -------------------------------------------------------------
-    let fit = 7;
-    const frame = () => {
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-
-      const wide = width > 900;
-      // Wide: sit beside the copy in the lower left. Narrow: no room to
-      // sidestep, so ride high and let the copy stack underneath.
-      planet.position.x = wide ? 1.45 : 0;
-      planet.position.y = wide ? 0 : 1.4;
-
-      const extent = RADIUS * 1.085; // the atmosphere shell, not just the body
-      const fill = wide ? 0.96 : 0.72;
-      // min(1, aspect) is the load-bearing part: below 1:1 it's the width
-      // that constrains the fit, not the height.
-      fit = extent / (Math.tan((camera.fov * Math.PI) / 360) * Math.min(1, camera.aspect) * fill);
-
-      // Fog has to travel with the camera. It's tuned by distance, so the
-      // same density that reads as a whisper at 6 units swallows the planet
-      // whole at 18 — which is exactly where a phone puts the camera.
-      scene.fog.density = 0.36 / fit;
-    };
-
-    // Opaque core. This is what makes the far tiles genuinely invisible
-    // instead of showing through as mirrored clutter, and what the tiles
-    // cast their gaps onto.
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(RADIUS, 64, 48),
-      // transparent up-front, never toggled: flipping `transparent` at
-      // runtime triggers a shader recompile on the frame it changes.
-      new THREE.MeshStandardMaterial({
-        color: 0x120d0a, roughness: 0.95, metalness: 0,
-        transparent: true, opacity: 0,
-      })
-    );
-    planet.add(core);
-
-    // Atmosphere: inverted shell, fresnel-bright at the limb and weighted
-    // toward the sun so the glow sits off-centre the way a real one does.
-    const atmosphere = new THREE.Mesh(
-      new THREE.SphereGeometry(RADIUS * 1.085, 48, 32),
-      new THREE.ShaderMaterial({
-        uniforms: {
-          uSun: { value: SUN_DIR.clone().normalize() },
-          uColor: { value: new THREE.Color(0xff8a5c) },
-          uCool: { value: new THREE.Color(0x5f9dff) },
-          uOpacity: { value: 0 },
-        },
-        vertexShader: `
-          varying vec3 vNormal;
-          varying vec3 vWorld;
-          void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vWorld = normalize(mat3(modelMatrix) * normal);
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          uniform vec3 uSun;
-          uniform vec3 uColor;
-          uniform vec3 uCool;
-          uniform float uOpacity;
-          varying vec3 vNormal;
-          varying vec3 vWorld;
-          void main() {
-            // Backside shell, so the rim is where the view normal turns away
-            // from the camera axis — this is the classic cheap fresnel.
-            float rim = pow(clamp(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0, 1.0), 2.4);
-            float lit = clamp(dot(vWorld, uSun), 0.0, 1.0);
-            vec3 col = mix(uCool, uColor, lit);
-            gl_FragColor = vec4(col, 1.0) * rim * uOpacity * (0.25 + lit * 1.5);
-          }
-        `,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending,
-        transparent: true,
-        depthWrite: false,
-      })
-    );
-    planet.add(atmosphere);
-
-    // -------------------------------------------------------------
-    // Shards — the burst itself. Tiles coming apart reads as a structure
-    // failing; what makes it read as a detonation is the spray of small
-    // fast stuff thrown out with them, moving faster than the debris and
-    // gone well before it. Points rather than meshes: there are thousands
-    // of times more of them than tiles and none is ever more than a speck.
-    // -------------------------------------------------------------
-    const SHARD_COUNT = 900;
-    const shardGeo = new THREE.BufferGeometry();
-    const shardPos = new Float32Array(SHARD_COUNT * 3);
-    const shardBase = new Float32Array(SHARD_COUNT * 3);
-    const shardVel = new Float32Array(SHARD_COUNT * 3);
-    const shardCol = new Float32Array(SHARD_COUNT * 3);
-    const ember = new THREE.Color(0xffb066);
-    const ash = new THREE.Color(0x8d6a52);
-    const hot = new THREE.Color(0xfff3e0);
-    for (let i = 0; i < SHARD_COUNT; i++) {
-      // Born on the crust, not at the centre — the surface is what breaks up.
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const dx = Math.sin(phi) * Math.cos(theta);
-      const dy = Math.cos(phi);
-      const dz = Math.sin(phi) * Math.sin(theta);
-      const r = RADIUS * (0.97 + Math.random() * 0.08);
-      shardBase[i * 3] = dx * r; shardBase[i * 3 + 1] = dy * r; shardBase[i * 3 + 2] = dz * r;
-      shardPos[i * 3] = dx * r; shardPos[i * 3 + 1] = dy * r; shardPos[i * 3 + 2] = dz * r;
-      // Outrunning the tiles, by a wide and uneven margin.
-      const speed = 1.5 + Math.random() * Math.random() * 6;
-      shardVel[i * 3] = dx * speed + (Math.random() - 0.5) * 0.8;
-      shardVel[i * 3 + 1] = dy * speed + (Math.random() - 0.5) * 0.8;
-      shardVel[i * 3 + 2] = dz * speed + (Math.random() - 0.5) * 0.8;
-      const t = Math.random();
-      const c = t < 0.18 ? hot : t < 0.7 ? ember : ash;
-      shardCol[i * 3] = c.r; shardCol[i * 3 + 1] = c.g; shardCol[i * 3 + 2] = c.b;
-    }
-    shardGeo.setAttribute("position", new THREE.BufferAttribute(shardPos, 3));
-    shardGeo.setAttribute("color", new THREE.BufferAttribute(shardCol, 3));
-    const shardMat = new THREE.PointsMaterial({
-      size: 0.075, vertexColors: true, transparent: true, opacity: 0,
-      sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    });
-    const shards = new THREE.Points(shardGeo, shardMat);
-    shards.visible = false;
-    planet.add(shards);
-
-    // -------------------------------------------------------------
-    // Tiles
+    // Photo ring — 3D positions, projected by hand each frame.
     // -------------------------------------------------------------
     const n = PHOTOS.length;
-    // Size each tile to the patch of surface it owns, so density follows
-    // from the photo count rather than being hand-tuned to it.
-    //
-    // The 1.28 is the part that isn't obvious. Sized to exactly its own
-    // share of the surface area, a tile only tiles cleanly on a square
-    // grid — and the Fibonacci lattice deliberately isn't one, so every
-    // neighbour sits at a slight offset and the crust comes out full of
-    // dark wedges. Oversizing past 1 makes the tiles shingle over each
-    // other instead, which is what actually closes the surface (and reads
-    // as a collage rather than a tiled floor).
-    const cell = Math.sqrt((4 * Math.PI * RADIUS * RADIUS) / n) * 1.34;
-    const tileW = cell * Math.sqrt(TILE_ASPECT);
-    const tileH = cell / Math.sqrt(TILE_ASPECT);
-
-    const tileGeo = makeTileGeometry(tileW, tileH, RADIUS * TILE_LIFT);
-    const loader = new THREE.TextureLoader();
-    const tiles = [];
-    const ownedTextures = [];
-    const materials = [];
-
-    let pending = 0;
-    let settled = false;
-    const markReady = () => {
-      if (!settled && pending === 0) {
-        settled = true;
-        setReady(true);
-      }
-    };
-
-    const up = new THREE.Vector3(0, 1, 0);
-    const altUp = new THREE.Vector3(1, 0, 0); // for the poles, where `up` is degenerate
-    const forward = new THREE.Vector3(0, 0, 1);
-
-    // One GPU texture per distinct image, shared by every tile that uses it.
-    // There are deliberately more tiles than photos (see about.js), so loading
-    // per-tile would upload the same twenty images four times over — four
-    // times the texture memory for pixels that are byte-identical.
-    const texCache = new Map();
-    const maxAniso = renderer.capabilities.getMaxAnisotropy();
-    const textureFor = (src) => {
-      const hit = texCache.get(src);
-      if (hit) return hit;
-      pending++;
-      const t = loader.load(
-        src,
-        () => { pending--; markReady(); },
-        undefined,
-        () => { pending--; markReady(); }
-      );
-      t.colorSpace = THREE.SRGBColorSpace;
-      // Most of the crust is seen at a glancing angle — that's what being on
-      // a sphere means — and that's precisely the case trilinear filtering
-      // blurs to mush. Cheap, and it's the difference between photographs
-      // and smears everywhere except dead centre.
-      t.anisotropy = maxAniso;
-      texCache.set(src, t);
-      ownedTextures.push(t);
-      return t;
-    };
-
-    PHOTOS.forEach((photo, i) => {
-      let tex;
-      if (photo.src) {
-        tex = textureFor(photo.src);
-      } else {
-        tex = makePlaceholderTexture(i, photo.caption ?? "");
-        ownedTextures.push(tex);
-      }
-
-      const mat = new THREE.MeshStandardMaterial({
-        map: tex,
-        // A little self-illumination from the photo itself, so tiles on the
-        // dark hemisphere stay pictures instead of silhouettes. Low enough
-        // that the sun still carves a terminator across the globe — that
-        // shading is what stops a sphere reading as a flat disc.
-        emissive: 0xffffff,
-        emissiveMap: tex,
-        emissiveIntensity: 0.15,
-        roughness: 0.82,
-        metalness: 0.04,
-        // Fully opaque, deliberately. Fading tiles in by opacity meant every
-        // one of them went through the transparent queue, where overlapping
-        // shingles blend into each other and the crust reads as frosted
-        // glass instead of paper. They arrive by scale and distance instead,
-        // which needs no blending at all.
-        // FrontSide, not Double: culling the backs is half of what sells
-        // the solidity — a tile on the far limb should vanish behind the
-        // body, not show you its mirrored self through the gaps.
-        side: THREE.FrontSide,
-      });
-      materials.push(mat);
-
-      const mesh = new THREE.Mesh(tileGeo, mat);
-
-      // Resting pose: sitting on its own patch, facing straight out.
-      const dir = fibonacciDirection(i, n);
-      // Each tile gets its own hairline radius. Shingled tiles all sitting
-      // at one radius are coplanar where they overlap, and coplanar
-      // overlapping geometry z-fights — it showed up as hard black wedges
-      // punched out of the tile corners. Staggering by index gives the
-      // depth buffer an unambiguous order; at 1e-4 of the radius the
-      // curvature mismatch against the shared geometry is invisible.
-      const restPos = dir.clone().multiplyScalar(RADIUS * TILE_LIFT * (1 + i * 0.0009));
-      // Build the resting attitude from an explicit basis rather than
-      // setFromUnitVectors: that picks an arbitrary roll per tile, so
-      // neighbours end up with unrelated horizons and the crust looks
-      // shuffled. Seating each tile's up-vector against the world axis
-      // gives the whole sphere one consistent grain.
-      const polar = Math.abs(dir.y) > 0.985; // no meaningful "up" on the axis
-      const ref = polar ? altUp : up;
-      const tangent = ref.clone().sub(dir.clone().multiplyScalar(ref.dot(dir))).normalize();
-      const restQuat = new THREE.Quaternion().setFromRotationMatrix(
-        new THREE.Matrix4().makeBasis(
-          new THREE.Vector3().crossVectors(tangent, dir).normalize(),
-          tangent,
-          dir
-        )
-      );
-      // Then a little roll off that grain, so it reads as collaged by hand
-      // rather than laid out by a machine.
-      const roll = (hash(i, 13) - 0.5) * (polar ? 0.9 : 0.42);
-      restQuat.multiply(new THREE.Quaternion().setFromAxisAngle(forward, roll));
-
-      // Launch pose: scattered far out, at a random attitude. Biased to
-      // start on roughly the same side of the sphere it will land on, so
-      // tiles converge inward instead of crossing through the body.
-      const spread = dir
-        .clone()
-        .multiplyScalar(6.5 + hash(i, 17) * 6)
-        .add(
-          new THREE.Vector3(
-            (hash(i, 19) - 0.5) * 9,
-            (hash(i, 23) - 0.5) * 9,
-            (hash(i, 29) - 0.5) * 9
-          )
-        );
-      const startQuat = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(hash(i, 31) * 6.28, hash(i, 37) * 6.28, hash(i, 41) * 6.28)
-      );
-
-      mesh.position.copy(spread);
-      mesh.quaternion.copy(startQuat);
-      mesh.visible = false;
-      mesh.scale.setScalar(0.001);
-      // Blast vector: mostly straight out along the tile's own normal, with
-      // lateral scatter and a tumble of its own. Purely radial debris just
-      // expands like an inflating balloon — still legibly a sphere, only
-      // bigger. The scatter is what actually breaks the silhouette.
-      const blastDir = dir
-        .clone()
-        .multiplyScalar(1.6 + hash(i, 43) * 1.5)
-        .add(
-          new THREE.Vector3(hash(i, 47) - 0.5, hash(i, 53) - 0.5, hash(i, 59) - 0.5)
-            .multiplyScalar(1.1)
-        );
-      const tumbleAxis = new THREE.Vector3(
-        hash(i, 61) - 0.5,
-        hash(i, 67) - 0.5,
-        hash(i, 71) - 0.5
-      ).normalize();
-
-      mesh.userData = {
-        restPos,
-        restQuat,
-        blastDir,
-        tumbleAxis,
-        tumbleRate: (hash(i, 73) - 0.4) * 7,
-        startPos: spread,
-        startQuat,
-        // Stagger by index, not at random: the landings then sweep across
-        // the sphere as one wave instead of popping in scattered order,
-        // which is the difference between "assembling" and "loading".
-        delay: (i / n) * (ASSEMBLY_END - TILE_FLIGHT),
-        mat,
+    const ring = PHOTOS.map((_, i) => {
+      const a = (i / n) * Math.PI * 2 + (hash(i, 3) - 0.5) * 0.5;
+      const r = 0.92 + hash(i, 5) * 0.1;
+      return {
+        x: Math.cos(a) * r,
+        y: Math.sin(a) * r,
+        z: (hash(i, 7) - 0.5) * 0.3,
+        dim: 1, // eased: dims while passing behind the copy
+        live: false,
       };
-      planet.add(mesh);
-      tiles.push(mesh);
     });
 
-    markReady(); // all-placeholder case never enters the loader callbacks
+    let camStart = 9;
+    let camEnd = 4;
+    let baseSize = 72;
+    let box = null;
+    const layout = () => {
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      const tanHalf = Math.tan((camera.fov * Math.PI) / 360);
+      const fit = Math.min(1, camera.aspect);
+      camStart = RADIUS / (tanHalf * fit * 0.44);
+      // Close enough that the sphere spans ~1.6x the screen's short side.
+      const want = RADIUS / (tanHalf * fit * 1.6);
+      camEnd = Math.sqrt(want * want + RADIUS * RADIUS);
+      // ~1.4px specks at the start distance, whatever the screen.
+      dustMat.uniforms.uScale.value = 1.5 * camStart * pixelRatio * Math.min(1.3, height / 900);
+      dustMat.uniforms.uMax.value = 2.6 * pixelRatio;
+      dustMat.uniforms.uAspect.value = camera.aspect;
 
-    // -------------------------------------------------------------
-    // Pointer parallax — a small camera offset, never a rotation of the
-    // planet itself. Turning the body on hover fights the scroll-driven
-    // spin; moving the camera reads as leaning in to look.
-    // -------------------------------------------------------------
-    const state = { p: progressRef.current, px: 0, py: 0, camX: 0, camY: 0 };
-    const onPointerMove = (e) => {
-      const rect = mount.getBoundingClientRect();
-      state.px = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      state.py = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+      baseSize = 74 * Math.min(1.1, Math.max(0.7, Math.min(width, height) / 850));
+      box = stagesRef.current?.getBoundingClientRect() ?? null;
     };
-    const onPointerLeave = () => { state.px = 0; state.py = 0; };
-    mount.addEventListener("pointermove", onPointerMove);
-    mount.addEventListener("pointerleave", onPointerLeave);
+
+    // Each photo's average colour, for its speck and glow.
+    const swatch = document.createElement("canvas");
+    swatch.width = swatch.height = 1;
+    const sctx = swatch.getContext("2d", { willReadFrequently: true });
+    const colourise = (i) => {
+      const img = imgRefs.current[i];
+      const el = bubbleRefs.current[i];
+      if (!img || !el) return;
+      try {
+        sctx.drawImage(img, 0, 0, 1, 1);
+        const [r, g, b] = sctx.getImageData(0, 0, 1, 1).data;
+        const lift = (v) => Math.round(lerp(v, 255, 0.35));
+        el.style.setProperty("--c", `rgb(${lift(r)}, ${lift(g)}, ${lift(b)})`);
+      } catch {
+        // A tainted canvas just means the default colour stays.
+      }
+    };
+    const imgCleanups = [];
+    imgRefs.current.forEach((img, i) => {
+      if (!img) return;
+      if (img.complete && img.naturalWidth) colourise(i);
+      else {
+        const onLoad = () => colourise(i);
+        img.addEventListener("load", onLoad);
+        imgCleanups.push(() => img.removeEventListener("load", onLoad));
+      }
+    });
+
+    const state = { p: progressRef.current, px: 0, py: 0, tx: 0, ty: 0, spin: 0, spinRate: 1, contact: 0, stagedAt: -Infinity, stagedAtMs: -Infinity };
+    const onPointerMove = (e) => {
+      state.px = (e.clientX / window.innerWidth) * 2 - 1;
+      state.py = (e.clientY / window.innerHeight) * 2 - 1;
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
 
     const onResize = () => {
       width = mount.clientWidth;
       height = mount.clientHeight;
       renderer.setSize(width, height);
-      frame();
+      layout();
     };
     window.addEventListener("resize", onResize);
-    frame();
+
+    // -------------------------------------------------------------
+    // Scroll hold. However fast someone scrolls, they can't get past a
+    // paragraph before its animation has played out:
+    //
+    //  - while the shown beat is still playing, the scroll can go as far
+    //    as the edge of the next beat's range, and no further;
+    //  - once it's done, it can go into the next beat but not past it —
+    //    so a stage can never be jumped over, only reached.
+    //
+    // Wheel and touch are *capped*, not reverted: the page scrolls
+    // normally right up to the edge and simply stops there, so there's no
+    // snap-back and nothing to feel laggy. Scrolling up is never held.
+    // Scrollbar drags and jump keys can't be intercepted, so as a backstop
+    // an overshoot is eased back to the edge from the scroll handler.
+    // -------------------------------------------------------------
+    const EDGE = 0.004; // stop this short of the next threshold
+    const maxProgress = () => {
+      const s = stageRef.current;
+      if (s >= STAGE_AT.length - 1) return Infinity;
+      const busy = s >= 0 && performance.now() - state.stagedAtMs < STAGE_DWELL[s];
+      const next = busy ? s + 1 : s + 2;
+      return next < STAGE_AT.length ? STAGE_AT[next] - EDGE : Infinity;
+    };
+    const limitY = () => {
+      const max = maxProgress();
+      if (max === Infinity) return Infinity;
+      const el = sectionRef.current;
+      if (!el) return Infinity;
+      const top = el.getBoundingClientRect().top + window.scrollY;
+      return top + (el.offsetHeight - window.innerHeight) * max;
+    };
+    const onWheel = (e) => {
+      if (e.deltaY <= 0 || e.ctrlKey) return;
+      const limit = limitY();
+      if (limit === Infinity) return;
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1);
+      const room = limit - window.scrollY;
+      if (room <= 0.5) { e.preventDefault(); return; }
+      if (dy > room) {
+        e.preventDefault();
+        window.scrollTo(0, limit);
+      }
+    };
+    let touchY = 0;
+    const onTouchStart = (e) => { touchY = e.touches[0].clientY; };
+    const onTouchMove = (e) => {
+      const y = e.touches[0].clientY;
+      const dy = touchY - y; // > 0: finger moving up, page scrolling down
+      touchY = y;
+      if (dy <= 0) return;
+      const limit = limitY();
+      if (limit !== Infinity && window.scrollY >= limit - 1) e.preventDefault();
+    };
+    const onScrollHold = () => {
+      const limit = limitY();
+      if (limit !== Infinity && window.scrollY > limit + 2) window.scrollTo(0, limit);
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("scroll", onScrollHold, { passive: true });
+
+    layout();
+    // Again once webfonts have settled — the copy box is what the ring
+    // dims itself behind.
+    const relayout = setTimeout(layout, 600);
 
     // -------------------------------------------------------------
     // Loop
     // -------------------------------------------------------------
     const clock = new THREE.Clock();
-    const tmpQuat = new THREE.Quaternion();
-    const tmpRot = new THREE.Quaternion();
+    const centre = new THREE.Vector3();
 
     const tick = () => {
       if (!activeRef.current) { rafIdRef.current = null; return; }
       rafIdRef.current = requestAnimationFrame(tick);
       const dt = Math.min(clock.getDelta(), 0.05);
+      const time = clock.elapsedTime;
 
-      // Ease toward the real scroll position — wheel steps and trackpad
-      // flicks become one continuous glide, same as SunHero.
       const target = progressRef.current;
       state.p += (target - state.p) * Math.min(1, dt * SMOOTHING);
       if (Math.abs(target - state.p) < 0.0002) state.p = target;
       const p = state.p;
 
-      // How far into the detonation we are — 0 until it starts.
-      const blastRaw = clamp01((p - EXPLODE_START) / (1 - EXPLODE_START));
-      const blast = easeBlast(blastRaw);
-      // Debris shrinks away at the very end rather than fading out. The
-      // tiles are opaque on purpose (see the material above) and switching
-      // transparency back on just for the exit would drop all 76 back into
-      // the blended queue for the one moment the text needs a clean screen.
-      const dissipate = 1 - smoothstep(0.52, 0.92, blastRaw);
+      // Camera: closes in logarithmically — equal scroll, equal apparent
+      // growth — so it feels like steady flight rather than a slow start
+      // and a sudden lurch at the end.
+      const e = smoothstep(FLIGHT[0], FLIGHT[1], p);
+      const arriving = Math.pow(1 - entryRef.current, 1.6);
+      const camZ = camStart * Math.pow(camEnd / camStart, e) * (1 + ARRIVAL_DEPTH * arriving);
+      camera.position.set(0, 0, camZ);
+      // Sphere sits low under the title at first; dead centre as it looms.
+      camera.lookAt(0, lerp(0.5, 0, smoothstep(0, 0.6, e)), 0);
 
-      let landed = 0;
-      for (let i = 0; i < tiles.length; i++) {
-        const mesh = tiles[i];
-        const d = mesh.userData;
-        const t = easeOut(clamp01((p - d.delay) / TILE_FLIGHT));
+      const fade = smoothstep(DISSOLVE[0], DISSOLVE[1], e);
+      // The starfield keeps turning at close to the globe's own pace.
+      dust.rotation.y += dt * lerp(0.08, 0.07, fade);
+      dustMat.uniforms.uFade.value = fade;
+      dustMat.uniforms.uTime.value = time;
 
-        mesh.position.lerpVectors(d.startPos, d.restPos, t);
-        tmpQuat.copy(d.startQuat).slerp(d.restQuat, t);
+      centre.set(0, 0, 0).project(camera);
+      if (coreRef.current) {
+        const scx = (centre.x * 0.5 + 0.5) * width;
+        const scy = (-centre.y * 0.5 + 0.5) * height;
+        coreRef.current.style.opacity = String(1 - smoothstep(0.3, 0.65, e));
+        coreRef.current.style.transform =
+          `translate3d(${scx}px, ${scy}px, 0) translate(-50%, -50%) scale(${1 + e * 2})`;
+      }
 
-        if (blast > 0) {
-          // Thrown outward from where it sat, tumbling as it goes. Debris
-          // stays parented to the planet, so the whole field keeps the
-          // group's slow rotation and drifts as one system rather than
-          // freezing into a static starburst.
-          mesh.position.addScaledVector(d.blastDir, blast * 5);
-          tmpQuat.multiply(tmpRot.setFromAxisAngle(d.tumbleAxis, blastRaw * d.tumbleRate));
+      // Story stage. The scroll only sets where the text is *headed*; what's
+      // shown walks there one paragraph at a time. Going forward, each one
+      // is held for its full dwell (the scroll hold below normally makes
+      // this moot — it's the backstop for a scrollbar drag or a jump key);
+      // going back, steps are quick. (A React update only on a real step.)
+      let want = -1;
+      for (let i = 0; i < STAGE_AT.length; i++) if (p >= STAGE_AT[i]) want = i;
+      const shown = stageRef.current;
+      const need = want > shown ? (shown < 0 ? 0 : STAGE_DWELL[shown] / 1000) : 0.35;
+      if (want !== shown && time - state.stagedAt >= need) {
+        const next = shown + Math.sign(want - shown);
+        stageRef.current = next;
+        state.stagedAt = time;
+        state.stagedAtMs = performance.now();
+        setStage(next);
+      }
+      const s = stageRef.current;
+      state.contact += ((s === STAGE_AT.length - 1 ? 1 : 0) - state.contact) * Math.min(1, dt * 5);
+
+      // ---------------------------------------------------------
+      // Photo ring
+      // ---------------------------------------------------------
+      const zoom = smoothstep(CLOUD[0], CLOUD[1], p);
+      const d = CLOUD_FAR * Math.pow(CLOUD_NEAR / CLOUD_FAR, zoom);
+      // Turns on its own and a little with scroll; eases to a stop while a
+      // photo is hovered, so it doesn't slide out from under the cursor.
+      state.spinRate += ((hoverRef.current ? 0 : 1) - state.spinRate) * Math.min(1, dt * 4);
+      state.spin += dt * 0.07 * state.spinRate;
+      const theta = state.spin + p * 1.4;
+      state.tx += (RING_TILT_X + state.py * 0.12 - state.tx) * Math.min(1, dt * 2);
+      state.ty += (RING_TILT_Y + state.px * 0.16 - state.ty) * Math.min(1, dt * 2);
+      const cT = Math.cos(theta), sT = Math.sin(theta);
+      const cX = Math.cos(state.tx), sX = Math.sin(state.tx);
+      const cY = Math.cos(state.ty), sY = Math.sin(state.ty);
+      const cx = width / 2;
+      const cy = height / 2;
+      // The ring's screen footprint: an ellipse filling most of the view.
+      // A true circle around the copy, as in the reference — sized off the
+      // short side so it fits the screen. A portrait phone has no room for
+      // a circle *and* readable text inside it, so there it stays a tall
+      // oval, above and below the words.
+      const portrait = width < height;
+      const ringR = Math.min(width, height) * 0.34;
+      const sx = portrait ? width * 0.44 : ringR;
+      const sy = portrait ? height * 0.34 : ringR;
+      const appear = smoothstep(CLOUD[0], CLOUD[0] + 0.05, p);
+      const live = s >= 0;
+
+      for (let i = 0; i < n; i++) {
+        const b = ring[i];
+        const el = bubbleRefs.current[i];
+        if (!el) continue;
+        if (appear <= 0.001) {
+          el.style.opacity = "0";
+          if (b.live) { el.classList.remove("live"); b.live = false; }
+          continue;
         }
-        mesh.quaternion.copy(tmpQuat);
+        // Spin about the view axis, then tilt — so the ring orbits the copy
+        // with real depth to it, near side bigger, far side smaller.
+        const x1 = b.x * cT - b.y * sT;
+        const y1 = b.x * sT + b.y * cT;
+        const y2 = y1 * cX - b.z * sX;
+        const z2 = y1 * sX + b.z * cX;
+        const x3 = x1 * cY + z2 * sY;
+        const z3 = -x1 * sY + z2 * cY;
+        const f = CLOUD_NEAR / (d - z3);
+        let x = cx + x3 * f * sx;
+        let y = cy + y2 * f * sy;
 
-        // Grows almost entirely in the last third of its flight, so tiles
-        // read as arriving from depth rather than inflating in place.
-        mesh.visible = t > 0.001 && dissipate > 0.001;
-        mesh.scale.setScalar((0.08 + 0.92 * smoothstep(0.25, 1, t)) * dissipate);
-        if (t > 0.995) landed++;
-      }
+        // A coloured speck while far, blooming into the photo as the camera
+        // arrives among them.
+        const nearness = CLOUD_NEAR / d; // ~0.25 far -> 1 arrived
+        const bloom = smoothstep(0.4, 0.9, nearness);
+        // Sized with real width/height, never a CSS scale(): a scaled-down
+        // element is rasterised big and resampled, which softens the edge
+        // until the circle stops looking like a circle. Drawn at its true
+        // pixel size, the browser anti-aliases a clean round edge.
+        // Every photo the same size once arrived — depth only decides which
+        // one draws in front, so the ring reads as an even circle of equals.
+        const size = Math.max(4, Math.round(lerp(5, baseSize, bloom)));
+        const half = size / 2;
+        // Never let a photo slide off the edge: half a circle cut by the
+        // viewport reads as a broken shape, not as something passing by.
+        // (Headroom for the 1.16x hover scale too.)
+        const edge = half * 1.16 + 12;
+        x = Math.min(width - edge, Math.max(edge, x));
+        y = Math.min(height - edge - 20, Math.max(edge + 36, y));
 
-      // The body fades up underneath the incoming tiles rather than sitting
-      // there from the start — otherwise the first thing on screen is a
-      // bare black ball, which gives the whole trick away before it begins.
-      // Tracks the crust rather than leading it: fading the body up first
-      // put a bare black ball on screen before the photos arrived, which
-      // gives away the shape before the assembly has earned it.
-      const bodyIn = smoothstep(0.1, 0.45, p);
-      // The body goes first and fast. It has to be gone before the debris
-      // has cleared, or the shell of tiles opens onto a black ball still
-      // hanging there in the middle, which reads as the crust peeling off
-      // rather than the planet coming apart.
-      const coreGone = smoothstep(0, 0.09, blastRaw);
-      core.material.opacity = bodyIn * (1 - coreGone);
-      core.visible = core.material.opacity > 0.01;
-      core.scale.setScalar(1 - coreGone * 0.4);
-
-      // The atmosphere flares as the body lets go, then dies — the light of
-      // the thing coming apart, and the only moment in the section with any
-      // real brightness in it.
-      // Shards ride a steeper curve than the tiles — thrown harder, gone
-      // sooner, so the burst outruns the debris instead of moving with it.
-      if (blastRaw > 0) {
-        shards.visible = true;
-        const reach = Math.pow(blastRaw, 0.6) * 6;
-        for (let i = 0; i < SHARD_COUNT * 3; i++) {
-          shardPos[i] = shardBase[i] + shardVel[i] * reach;
+        // Dim anything passing behind the copy.
+        let behind = false;
+        if (box && live) {
+          behind = x + half > box.left && x - half < box.right &&
+            y + half > box.top && y - half < box.bottom;
         }
-        shardGeo.attributes.position.needsUpdate = true;
-        shardMat.opacity = smoothstep(0, 0.05, blastRaw) * (1 - smoothstep(0.1, 0.5, blastRaw)) * 0.9;
-      } else if (shards.visible) {
-        shards.visible = false;
+        b.dim += ((behind ? 0.3 : 1) - b.dim) * Math.min(1, dt * 6);
+
+        // Dimmed by darkening, not transparency — a see-through photo lets
+        // the stars show through it and reads as a ghostly blob instead of
+        // a solid disc. Opacity is only for the first moment it appears.
+        el.style.opacity = String(appear);
+        el.style.filter = `brightness(${(b.dim * (1 - state.contact * 0.45)).toFixed(3)})`;
+        el.style.width = el.style.height = `${size}px`;
+        el.style.transform = `translate3d(${x - half}px, ${y - half}px, 0)`;
+        el.style.zIndex = String(Math.round(f * 100));
+
+        const isLive = live && !behind && nearness > 0.95;
+        if (isLive !== b.live) { el.classList.toggle("live", isLive); b.live = isLive; }
       }
 
-      // Restrained deliberately. Scaling this shell up while the camera is
-      // still close turns an additive fresnel into a screen-filling donut —
-      // it stops reading as light coming off the planet and starts reading
-      // as a gradient. A brief lift and a fast death does the job.
-      const flare = (1 + 1.4 * smoothstep(0, 0.035, blastRaw)) * (1 - smoothstep(0.03, 0.18, blastRaw));
-      atmosphere.material.uniforms.uOpacity.value = smoothstep(0.3, 0.75, p) * 0.9 * flare;
-      atmosphere.scale.setScalar(1 + blast * 0.1);
-
-      // Spin: a slow constant turn, plus a scroll-driven one so scrolling
-      // always visibly moves the planet even after the last tile has landed.
-      planet.rotation.y += dt * 0.055;
-      planet.rotation.y = planet.rotation.y % (Math.PI * 2);
-      planet.rotation.x = lerp(0.12, -0.05, smoothstep(0, 1, p));
-
-      // Drift in from slightly further out as it assembles — the camera
-      // settling as the planet finishes gathering itself.
-      // Settles in as the planet gathers, then gives ground as it bursts —
-      // holding the original framing through the blast just throws the
-      // debris straight past the camera and out of frame.
-      const dolly =
-        lerp(fit * 1.4, fit, smoothstep(0.05, ASSEMBLY_END + 0.15, p)) * (1 + blast * 2.2);
-      // Scaled by distance — a fixed offset that reads as a gentle lean at
-      // 7 units is imperceptible at 18.
-      state.camX += (state.px * 0.08 * fit - state.camX) * Math.min(1, dt * 3);
-      state.camY += (-state.py * 0.055 * fit - state.camY) * Math.min(1, dt * 3);
-      camera.position.set(state.camX + planet.position.x, state.camY + planet.position.y, dolly);
-      camera.lookAt(planet.position.x, planet.position.y, 0);
-
-      stars.rotation.y += dt * 0.004;
-
-      // Copy holds off until the shape is unmistakably a planet.
-      // The caption belongs to the intact planet: in once it's whole, out
-      // the moment it isn't. Leaving it up through the blast would have two
-      // blocks of text competing while the screen is at its busiest.
-      if (copyRef.current) {
-        const k =
-          smoothstep(ASSEMBLY_END - 0.16, ASSEMBLY_END + 0.1, p) *
-          (1 - smoothstep(EXPLODE_START - 0.04, EXPLODE_START + 0.06, p));
-        copyRef.current.style.opacity = String(k);
-        copyRef.current.style.transform = `translate3d(0, ${(1 - k) * 18}px, 0)`;
+      // The words wait for the globe to arrive.
+      const landed = smoothstep(0.6, 1, entryRef.current);
+      const titleK = (1 - smoothstep(TITLE_OUT[0], TITLE_OUT[1], p)) * landed;
+      if (titleRef.current) {
+        titleRef.current.style.opacity = String(titleK);
+        titleRef.current.style.transform = `translate3d(0, ${(1 - titleK) * -20}px, 0)`;
       }
+      if (metaRef.current) metaRef.current.style.opacity = String(titleK);
+      if (hintRef.current) hintRef.current.style.opacity = String((1 - smoothstep(0.01, 0.06, p)) * landed);
 
-      // The reveal waits for the debris to be well clear before it starts,
-      // then resolves paragraph by paragraph.
-      if (revealRef.current) {
-        const k = smoothstep(0.3, 0.6, blastRaw);
-        revealRef.current.style.opacity = String(k);
-        revealRef.current.style.pointerEvents = k > 0.5 ? "auto" : "none";
-        for (let i = 0; i < paraRefs.current.length; i++) {
-          const el = paraRefs.current[i];
-          if (!el) continue;
-          const kp = smoothstep(0.32 + i * 0.08, 0.54 + i * 0.08, blastRaw);
-          el.style.opacity = String(kp);
-          el.style.transform = `translate3d(0, ${(1 - kp) * 14}px, 0)`;
-        }
-      }
-      // The hint has nothing left to promise once the last tile has landed.
-      if (hintRef.current) {
-        hintRef.current.style.opacity = String(1 - smoothstep(ASSEMBLY_END - 0.1, ASSEMBLY_END + 0.1, p));
-      }
-      if (counterRef.current) {
-        counterRef.current.textContent = `${String(landed).padStart(2, "0")} / ${n} FRAGMENTS`;
-      }
-
-      // Fades in over Experience, and deliberately never fades out — it's
-      // the last section, and the page ends on it.
       if (stackRef.current) {
-        const o = entryRef.current;
+        // Opaque well before the camera arrives, so what's seen for most of
+        // the approach is the globe itself, not two scenes blended.
+        const o = smoothstep(0, 0.4, entryRef.current);
         stackRef.current.style.opacity = o;
         stackRef.current.style.pointerEvents = o > 0.01 ? "auto" : "none";
       }
@@ -828,22 +997,25 @@ export default function About() {
       if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
       tickRef.current = null;
+      clearTimeout(relayout);
+      imgCleanups.forEach((fn) => fn());
       window.removeEventListener("resize", onResize);
-      mount.removeEventListener("pointermove", onPointerMove);
-      mount.removeEventListener("pointerleave", onPointerLeave);
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("scroll", onScrollHold);
+      window.removeEventListener("pointermove", onPointerMove);
       renderer.dispose();
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
-      // One geometry shared by every tile, so it's disposed once here.
-      tileGeo.dispose();
-      materials.forEach((m) => m.dispose());
-      ownedTextures.forEach((t) => t.dispose());
-      core.geometry.dispose(); core.material.dispose();
-      atmosphere.geometry.dispose(); atmosphere.material.dispose();
-      shardGeo.dispose(); shardMat.dispose();
-      starGeo.dispose(); starMat.dispose();
+      dustGeo.dispose(); dustMat.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everActive]);
+
+  const open = openIndex != null ? PHOTOS[openIndex] : null;
+  const stageClass = (i) =>
+    stage === i ? "is-in" : stage > i ? "is-past" : "is-future";
+  const contactStage = ABOUT.story.length;
 
   return (
     // -100vh for the same reason as Projects and Experience: a pinned
@@ -852,47 +1024,132 @@ export default function About() {
       ref={sectionRef}
       style={{ position: "relative", height: `${SCROLL_LENGTH_VH}vh`, marginTop: "-100vh" }}
     >
-      <div ref={stackRef} className="space-ground" style={styles.stack}>
+      <div ref={stackRef} className="space-ground about" style={styles.stack}>
         <div ref={mountRef} style={styles.canvasMount} />
+        <div ref={coreRef} className="about-core" />
 
         <div style={styles.topBar}>
           <span style={styles.eyebrow}>{ABOUT.eyebrow}</span>
-          <span ref={counterRef} style={styles.counter} />
         </div>
 
-        <div ref={copyRef} style={styles.copy}>
+        <div ref={titleRef} style={styles.title}>
           <h2 style={styles.heading}>
             {ABOUT.heading.split("\n").map((line, i) => (
               <span key={i} style={styles.headingLine}>{line}</span>
             ))}
           </h2>
-          <div style={styles.metaRow}>
-            {ABOUT.meta.map((m, i) => (
-              <span key={m} style={styles.metaItem}>
-                {i > 0 && <span style={styles.dot}>·</span>}
-                {m}
-              </span>
-            ))}
-          </div>
         </div>
 
-        <div ref={revealRef} style={styles.reveal}>
-          <div style={styles.revealInner}>
+        <div ref={metaRef} className="about-meta" style={styles.metaRow}>
+          {ABOUT.meta.map((m, i) => (
+            <span key={m} style={styles.metaItem}>
+              {i > 0 && <span style={styles.dot}>·</span>}
+              {m}
+            </span>
+          ))}
+        </div>
+
+        <div
+          className="about-bubbles"
+          onPointerOver={(e) => { if (e.target.closest(".about-bubble.live")) hoverRef.current = true; }}
+          onPointerOut={(e) => { if (e.target.closest(".about-bubble")) hoverRef.current = false; }}
+        >
+          {PHOTOS.map((photo, i) => (
+            <button
+              key={i}
+              type="button"
+              ref={(el) => { bubbleRefs.current[i] = el; }}
+              className="about-bubble"
+              onClick={() => photo.src && setOpenIndex(i)}
+              aria-label={photo.label || `Photo ${i + 1}`}
+            >
+              <span className="about-bubble__disc">
+                {photo.src && (
+                  <img
+                    ref={(el) => { imgRefs.current[i] = el; }}
+                    src={photo.src}
+                    alt=""
+                    draggable={false}
+                  />
+                )}
+              </span>
+              {photo.label && <span className="about-bubble__label">{photo.label}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Every stage shares one grid cell, so the box is always the size of
+            the largest — which is what the ring dims itself behind. */}
+        <div className="about-stages-wrap">
+          <div ref={stagesRef} className="about-stages">
             {ABOUT.story.map((para, i) => (
-              <p
-                key={i}
-                ref={(el) => { paraRefs.current[i] = el; }}
-                style={{ ...styles.storyPara, ...(i === 0 ? styles.storyLead : null) }}
-              >
-                {para}
+              <p key={i} className={`about-stage ${stageClass(i)}`}>
+                {/* Long paragraphs step down a size, so none of them turns
+                    into a wall of text in the middle of the screen; the
+                    opening line steps up. */}
+                <span
+                  className={`about-para${i === 0 ? " about-para--intro" : ""}${para.trim().split(/\s+/).length > 28 ? " about-para--long" : ""}`}
+                >
+                  <Rich text={para} active={stage === i} />
+                </span>
               </p>
             ))}
+
+            <div className={`about-stage about-contact ${stageClass(contactStage)}`}>
+              <span className="about-badge">
+                <span className="about-badge__dot" aria-hidden="true" />
+                {CONTACT.badge}
+              </span>
+              <h3 className="about-contact__heading">
+                {CONTACT.heading.split("\n").map((line, i) => (
+                  <span key={i} className="about-contact__line"><Rich text={line} active={stage === contactStage} /></span>
+                ))}
+              </h3>
+              <div className="about-links">
+                {CONTACT.links.map((link, j) => (
+                  <a
+                    key={link.id}
+                    className={`about-link about-link--${link.id}`}
+                    style={{ "--j": j }}
+                    href={link.href || undefined}
+                    target={link.href && !link.href.startsWith("mailto:") ? "_blank" : undefined}
+                    rel="noreferrer"
+                    aria-label={link.label}
+                    aria-disabled={!link.href || undefined}
+                    tabIndex={stage === contactStage ? 0 : -1}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">{ICONS[link.id]}</svg>
+                    <span className="about-link__label">{link.label}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div ref={hintRef} style={styles.hint}>SCROLL TO BUILD THE WORLD</div>
+        {/* Which beat of the story you're on. */}
+        {/* The active tick fills over its beat's dwell — so a held scroll
+            reads as "this is still playing", not as the page being stuck. */}
+        <div
+          className="about-progress"
+          data-on={stage >= 0 || undefined}
+          style={{ "--dwell": `${STAGE_DWELL[Math.max(0, stage)]}ms` }}
+        >
+          {[...ABOUT.story, CONTACT].map((_, i) => (
+            <span key={i} className={i === stage ? "on" : undefined} />
+          ))}
+        </div>
 
-        {!ready && <div style={styles.loading}>GATHERING PLACES…</div>}
+        <div ref={hintRef} style={styles.hint}>SCROLL TO DIVE IN</div>
+
+        {open && (
+          <div className="about-lightbox" onClick={() => setOpenIndex(null)}>
+            <figure onClick={(e) => e.stopPropagation()}>
+              <img src={open.src} alt={open.label || ""} />
+              {open.label && <figcaption>{open.label}</figcaption>}
+            </figure>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -921,50 +1178,23 @@ const styles = {
     fontSize: 11, letterSpacing: 2, color: "rgba(255,255,255,0.75)",
   },
   eyebrow: { color: ACCENT },
-  counter: { color: "rgba(255,255,255,0.55)" },
-  copy: {
-    position: "absolute", left: 32, bottom: 64, maxWidth: 400,
-    opacity: 0, willChange: "opacity, transform",
+  title: {
+    position: "absolute", top: "10vh", left: 0, right: 0, padding: "0 24px",
+    display: "flex", justifyContent: "center", textAlign: "center",
+    pointerEvents: "none", willChange: "opacity, transform",
   },
   heading: {
     display: "flex", flexDirection: "column",
-    fontFamily: "Helvetica, Arial, sans-serif", fontWeight: 600,
-    fontSize: "clamp(22px, 2.6vw, 34px)", lineHeight: 1.15, color: "#fff",
-    // Text sits over a lit planet on some scroll positions — a soft shadow
-    // keeps it readable without a panel behind it.
-    textShadow: "0 2px 24px rgba(0,0,0,0.75)",
+    fontFamily: "Geist, Helvetica, Arial, sans-serif", fontWeight: 400,
+    fontSize: "clamp(22px, 2.6vw, 36px)", lineHeight: 1.15, letterSpacing: "-0.02em", color: "#fff",
   },
   headingLine: { display: "block" },
-  // Centred on the screen, not on the planet's offset — by the time this
-  // is readable there is no planet left to sit beside.
-  reveal: {
-    position: "absolute", inset: 0, display: "flex",
-    alignItems: "center", justifyContent: "center",
-    padding: "0 28px", opacity: 0, willChange: "opacity",
-  },
-  revealInner: { maxWidth: 620, textAlign: "center" },
-  storyPara: {
-    margin: "0 0 20px", fontSize: 13.5, lineHeight: 1.85,
-    color: "rgba(255,255,255,0.68)",
-    textShadow: "0 1px 22px rgba(0,0,0,0.9)",
-    willChange: "opacity, transform",
-  },
-  // The opening line carries the name, so it gets the weight.
-  storyLead: {
-    fontFamily: "Helvetica, Arial, sans-serif",
-    fontSize: "clamp(17px, 1.9vw, 23px)", lineHeight: 1.5,
-    color: "#fff", marginBottom: 26,
-  },
-  metaRow: { marginTop: 18, display: "flex", gap: 10, fontSize: 10, letterSpacing: 1.6 },
+  // Placement lives in about.css — it moves above the hint on a phone.
+  metaRow: { position: "absolute", display: "flex", gap: 10, fontSize: 10, letterSpacing: 1.6 },
   metaItem: { color: "rgba(255,255,255,0.45)", display: "flex", gap: 10 },
   dot: { opacity: 0.4 },
   hint: {
-    position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
+    position: "absolute", bottom: 28, left: "50%", transform: "translateX(-50%)",
     fontSize: 10, letterSpacing: 2, color: "rgba(255,255,255,0.4)",
-  },
-  loading: {
-    position: "absolute", inset: 0, display: "flex", alignItems: "center",
-    justifyContent: "center", fontSize: 12, letterSpacing: 2,
-    color: "rgba(255,255,255,0.4)", pointerEvents: "none",
   },
 };

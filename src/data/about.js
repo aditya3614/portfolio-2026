@@ -3,35 +3,42 @@
 export const ABOUT = {
   eyebrow: "ABOUT",
 
-  // Sits in the lower left while the planet is whole. Deliberately short —
-  // it shares the screen with the globe, so it can only be a caption.
+  // Sits above the dust sphere before the dive. Gone as soon as the
+  // camera starts moving, so it only has to hold a beat.
   heading: "A world built out of\nthe places I've been.",
   meta: ["BASED IN BANGALORE", "AVAILABLE FOR WORK"],
 
-  // What's left once the planet bursts. This owns the whole screen with
-  // nothing to compete against, so it's the one place on the page that can
-  // afford actual prose. Paragraphs resolve one after another.
+  // Centred in the photo constellation after the burst, one paragraph at a
+  // time — each gets its own stretch of scroll; the current one lifts away
+  // upward as the next rises in from below. Add or remove freely — the
+  // scroll is divided up evenly between however many there are.
+  // Keep each under ~28 words to get the large type; longer ones step down
+  // to body size (see .about-para--long).
+  // Inline effects, written into the copy:
+  //   {Aditya Dave}       name — coral gradient with a passing shine
+  //   {magic|word}        the word condenses out of stardust
+  //   {mark|word}         highlighter swipe (several in a row go in turn)
+  //   {underline|words}   hand-drawn sketchy underline
+  //   {circle|words}      hand-drawn loop circling the words
+  //   {chase|words}       sketchy underline with two doodles running along it
+  // Each one plays as its paragraph comes in.
   story: [
-    "I believe there‘s magic in software—the kind that only happens when product, design, and engineering work as one. " +
-      "" +
-      "",
-    "I’m a frontend engineer who sits somewhere between design and code. I enjoy taking a rough idea, figuring out how it should feel, and then obsessing over the little details until it actually feels right " +
-      "Good interactions. Smooth animations. Thoughtful interfaces. Code that doesn’t fight the design. " +
-      "surprises you. You only notice any of it when it's missing.",
-    "This portfolio is basically a collection of things I’ve built while chasing that feeling." 
+    "Hi, I’m {Aditya Dave}.",
+    "I believe there’s {magic|magic} in software—the kind that only happens when {mark|product}, {mark|design}, and {mark|engineering} work as one.",
+    "I’m a {underline|frontend engineer} who sits somewhere between design and code.",
+    "I take rough ideas, figure out how they should feel, and obsess over the details until it actually {circle|feels right}.",
+    "This portfolio is basically a collection of things I’ve built {chase|while chasing that feeling}." 
     
   ],
 };
 
 // ---------------------------------------------------------------------------
-// The crust of the planet.
+// The photos that bloom out of the burst in About, as round bubbles.
 //
 // Sourced from src/assets/photos-web/ — web-sized derivatives (512x640, centre
-// cropped to the tile's 4:5) of the originals in src/assets/photos/. The
-// originals are 3-4k phone photos, and the size that matters isn't the
-// download: a 3024x4032 JPEG costs ~48MB of GPU memory once decoded, on a tile
-// that never renders more than a few hundred pixels across. Twenty of those
-// would cost more texture memory than the whole rest of the page.
+// cropped to 4:5) of the originals in src/assets/photos/. The originals are
+// 3-4k phone photos; a 3024x4032 JPEG costs ~48MB of GPU memory once decoded,
+// on a print that never renders more than a few hundred pixels across.
 //
 // To regenerate after adding to src/assets/photos/:
 //
@@ -41,7 +48,8 @@ export const ABOUT = {
 //       -q:v 4 "$(printf 'src/assets/photos-web/photo-%02d.jpg' $i)"; done
 //
 // Globbed rather than imported one by one, so dropping more files in and
-// re-running the command above is the whole workflow — nothing here changes.
+// re-running the command above is the whole workflow. Each photo becomes one
+// bubble; the layout spreads itself over however many there are.
 // ---------------------------------------------------------------------------
 const files = import.meta.glob("../assets/photos-web/*.jpg", {
   eager: true,
@@ -49,32 +57,66 @@ const files = import.meta.glob("../assets/photos-web/*.jpg", {
 });
 
 // Sorted by path: import.meta.glob's key order isn't guaranteed, and an
-// unstable order would reshuffle the whole globe between builds.
+// unstable order would reshuffle the photos between builds.
 const sources = Object.keys(files)
   .sort()
   .map((k) => files[k]);
 
-// Tiles wanted on the sphere. Tile size is derived from the count in
-// About.jsx (surface area / count), so this is what sets how fine-grained the
-// crust looks — not how many photos you happen to have.
-const TARGET_TILES = 76;
+// Hover labels, by position in the sorted list above (photo-01 first). Shown
+// in the pill above a bubble and under the photo when it's opened. Leave an
+// entry empty and that bubble simply has no label.
+const LABELS = [
+  "the dalmatian",
+  "friday night",
+  "friday night, again",
+  "boats at dusk",
+  "golden hour",
+  "sun through the trees",
+  "last light",
+  "boatyard",
+  "road trip",
+  "beach sunset",
+  "birthday",
+  "the horse",
+  "under the canopy",
+  "dessert first",
+  "canopy, again",
+  "photobooth strips",
+  "festival day",
+  "mirror selfie",
+  "bollywood night",
+  "good company",
+];
 
-// With fewer photos than tiles, each photo is used more than once. That's on
-// purpose: a planet needs a closed surface, and twenty tiles at this radius is
-// a handful of billboards in a ring, not a world. Repeats aren't visible as
-// repeats because the Fibonacci lattice places consecutive indices a golden
-// angle apart — tiles that end up physically adjacent are dozens of indices
-// apart, so the same photo never lands next to itself.
-const reps = sources.length ? Math.max(1, Math.round(TARGET_TILES / sources.length)) : 0;
+// Which photos make the cut, by file number (photo-01 = 1). Kept to a
+// handful on purpose: the constellation reads as a few chosen moments, and
+// each bubble can be big enough to actually see. Edit freely.
+const FEATURED = [1, 2, 5, 9, 11, 14, 19, 20];
+
+const all = sources.map((src, i) => ({ src, label: LABELS[i] || "" }));
+const featured = FEATURED.map((n) => all[n - 1]).filter(Boolean);
 
 export const PHOTOS = sources.length
-  ? Array.from({ length: sources.length * reps }, (_, i) => ({
-      src: sources[i % sources.length],
-      caption: `IMG ${String((i % sources.length) + 1).padStart(2, "0")}`,
-    }))
-  : // Nothing in photos-web/ yet: fall back to generated placeholders so the
-    // section still builds a planet rather than rendering an empty core.
-    Array.from({ length: TARGET_TILES }, (_, i) => ({
-      src: null,
-      caption: `IMG ${String(i + 1).padStart(2, "0")}`,
-    }));
+  ? featured.length ? featured : all
+  : // Nothing in photos-web/ yet: coloured bubbles with no image, so the
+    // constellation still forms.
+    Array.from({ length: 10 }, () => ({ src: null, label: "" }));
+
+// ---------------------------------------------------------------------------
+// The last screen of the page. Fill in each href; one left empty still shows
+// its circle (so the row keeps its shape while you're filling these in) but
+// goes nowhere. Delete an entry to drop it entirely.
+// ---------------------------------------------------------------------------
+export const CONTACT = {
+  // The pill above the heading, with a live "available" dot.
+  badge: "Open to work",
+  heading: "Let's build something\nthat feels right.",
+  links: [
+    { id: "instagram", label: "Instagram", href: "" },
+    { id: "x", label: "Twitter / X", href: "" },
+    { id: "linkedin", label: "LinkedIn", href: "" },
+    { id: "substack", label: "Substack", href: "" },
+    { id: "github", label: "GitHub", href: "" },
+    { id: "email", label: "Email", href: "" }, // "mailto:you@example.com"
+  ],
+};

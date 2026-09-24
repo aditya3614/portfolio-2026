@@ -68,7 +68,10 @@ export function useScrollProgress(sectionRef) {
  */
 const ENTRY_FADE = 0.2 // fraction of a viewport the fade-in spans
 
-export function useScrollProgressRef(sectionRef) {
+// `entryFade` overrides how much of a viewport the fade-in spans — About
+// stretches it so its globe can come up out of the dark while Experience is
+// still flying toward it.
+export function useScrollProgressRef(sectionRef, entryFade = ENTRY_FADE) {
   const progressRef = useRef(0)
   const entryRef = useRef(0)
 
@@ -81,7 +84,7 @@ export function useScrollProgressRef(sectionRef) {
       const value = total > 0 ? -rect.top / total : 0
       progressRef.current = Math.min(1, Math.max(0, value))
 
-      const fadeDistance = window.innerHeight * ENTRY_FADE
+      const fadeDistance = window.innerHeight * entryFade
       const entry = (fadeDistance - rect.top) / fadeDistance
       entryRef.current = Math.min(1, Math.max(0, entry))
     }
@@ -93,7 +96,7 @@ export function useScrollProgressRef(sectionRef) {
       window.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
     }
-  }, [sectionRef])
+  }, [sectionRef, entryFade])
 
   return { progressRef, entryRef }
 }

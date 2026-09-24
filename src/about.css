@@ -1,0 +1,842 @@
+/* About — photo bubbles, story stages, contact screen and lightbox.
+   Bubble positions are written every frame from About.jsx; everything here
+   is how each piece looks and how it transitions. */
+
+.about-core {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 6px 2px rgba(190, 212, 255, 0.9),
+    0 0 30px 8px rgba(140, 170, 255, 0.35);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ------------------------------------------------------------------ */
+/* Photo bubbles                                                       */
+/* ------------------------------------------------------------------ */
+
+.about-bubbles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.about-bubble {
+  --c: #cfd8ea;
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Width, height and position are written every frame from About.jsx. */
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.about-bubble.live {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* A flat, solid disc — no glow, no border — like the reference's logos.
+   The average colour behind the photo only shows before it loads. */
+.about-bubble__disc {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--c);
+  transition:
+    transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.35s;
+}
+
+.about-bubble__disc img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.about-bubble.live:hover .about-bubble__disc,
+.about-bubble.live:focus-visible .about-bubble__disc {
+  transform: scale(1.12);
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.about-bubble:focus-visible,
+.about-link:focus-visible {
+  outline: none;
+}
+
+/* Shared pill label, above a bubble or a contact link on hover. */
+.about-bubble__label,
+.about-link__label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  transform: translate(-50%, 4px);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fff;
+  color: #111;
+  font: 600 10px/1 "Courier New", monospace;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.about-bubble.live:hover .about-bubble__label,
+.about-bubble.live:focus-visible .about-bubble__label,
+.about-link:hover .about-link__label,
+.about-link:focus-visible .about-link__label {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Story stages                                                        */
+/* ------------------------------------------------------------------ */
+
+.about-stages-wrap {
+  position: absolute;
+  inset: 0;
+  /* Above every photo (their z-index follows depth, up to ~150), so a
+     photo drifting behind the words never covers them. */
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 28px;
+  pointer-events: none;
+}
+
+/* All stages stacked in one cell, so the box is always the largest one. */
+.about-stages {
+  display: grid;
+  /* Narrow on purpose: the copy has to sit inside the ring of photos. */
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+}
+
+.about-stage {
+  grid-area: 1 / 1;
+  align-self: center;
+  margin: 0;
+}
+
+.about-para {
+  display: block;
+  margin: 0 auto;
+  font-family: Geist, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: clamp(19px, 1.7vw, 25px);
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: #fff;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.8);
+}
+
+/* The opening line — the introduction — gets the most size on the page. */
+.about-para--intro {
+  font-size: clamp(30px, 3.2vw, 46px);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+/* The name: a warm coral gradient from the site's red, with a band of
+   light sweeping across it every few seconds. The gradient is painted
+   into the letterforms (background-clip: text) and slid sideways; the
+   shine is just the white stop in the middle of it passing through. It
+   sweeps in the first ~40% of each loop and then rests, so it glints
+   rather than strobes. */
+.about-name {
+  /* Never split across lines — "Aditya / Dave" reads as two words, not a name. */
+  white-space: nowrap;
+  background: linear-gradient(
+    100deg,
+    #ff5a4e 0%,
+    #ff8a6e 38%,
+    #fff4ee 50%,
+    #ff8a6e 62%,
+    #ff5a4e 100%
+  );
+  background-size: 250% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* A text-shadow would paint over clipped-background text and muddy it;
+     a filter glow sits behind it instead. */
+  text-shadow: none;
+  filter: drop-shadow(0 0 22px rgba(255, 90, 78, 0.28));
+  animation: about-shine 4.5s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+
+@keyframes about-shine {
+  0% {
+    background-position: 100% 0;
+  }
+  40%,
+  100% {
+    background-position: 0% 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Inline effects — each keyed off .about-stage.is-in, so it plays as   */
+/* its paragraph lands (after the ~0.2s + 0.8s entrance) and resets     */
+/* when the paragraph leaves.                                           */
+/* ------------------------------------------------------------------ */
+
+.about-fx {
+  position: relative;
+  white-space: nowrap;
+}
+
+/* magic — assembles out of dots (drawn by MagicWord in About.jsx), then
+   the dots dissolve into the solid word in the same burnt orange. The
+   colour change is timed to the moment the last dot settles (~1.4s). */
+.about-fx-magic {
+  display: inline-block;
+}
+
+.about-fx-magic__text {
+  color: transparent;
+  text-shadow: none;
+  transition: color 0.2s ease;
+}
+
+.about-stage.is-in .about-fx-magic__text {
+  color: #e0602a;
+  transition: color 0.4s ease 1.38s;
+}
+
+.about-fx-magic__swarm {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* mark — a highlighter swipe. The gradient's soft, slanted ends and the
+   slightly short height give it the look of a real marker stroke rather
+   than a box. Several marks in one paragraph go one after another (--o),
+   and the text darkens as the ink passes under it so it stays legible on
+   the bright yellow. */
+.about-fx-mark {
+  --ink: rgba(253, 224, 71, 0.88);
+  padding: 0 0.12em;
+  margin: 0 -0.06em;
+  border-radius: 0.2em;
+  background-image: linear-gradient(
+    100deg,
+    transparent 0.5%,
+    var(--ink) 3%,
+    var(--ink) 96%,
+    transparent 99.5%
+  );
+  background-repeat: no-repeat;
+  background-position: 0 66%;
+  background-size: 0% 70%;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition:
+    background-size 0.2s ease,
+    color 0.2s ease;
+}
+
+.about-stage.is-in .about-fx-mark {
+  background-size: 100% 70%;
+  color: #17130a;
+  text-shadow: none;
+  transition:
+    background-size 0.45s cubic-bezier(0.65, 0, 0.35, 1) calc(var(--mark-at, 0.85s) + var(--o) * 0.3s),
+    color 0.18s ease calc(var(--mark-at, 0.85s) + 0.17s + var(--o) * 0.3s);
+}
+
+/* In a paragraph that also has a {magic} word, the highlights wait for the
+   stars to finish forming it — one flourish, then the next. */
+.about-fx-magic ~ .about-fx-mark {
+  --mark-at: 1.5s;
+}
+
+/* underline / circle — hand-drawn strokes that draw themselves on. Each
+   path is normalised to length 1 (pathLength), so a 1-long dash offset by
+   1 is invisible and animating the offset to 0 draws it. The strokes scale
+   with their SVG (no non-scaling-stroke): with it, the dash is measured in
+   screen space but pathLength in user space, and on a stretched SVG the
+   dash only reaches part of the way along — an underline that stops short.
+   Stroke widths below are in viewBox units to compensate. */
+.about-fx-underline > svg,
+.about-fx-circle svg {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.about-fx-underline > svg path,
+.about-fx-circle svg path {
+  fill: none;
+  stroke: #ff6b5e;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 0.25s ease;
+}
+
+.about-fx-underline > svg {
+  left: -2%;
+  width: 104%;
+  bottom: -0.3em;
+  height: 0.45em;
+}
+
+.about-fx-underline > svg path {
+  stroke-width: 3.2;
+}
+
+.about-fx-underline > svg path + path {
+  stroke-width: 2.2;
+  opacity: 0.75;
+}
+
+.about-stage.is-in .about-fx-underline > svg path {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 0.65s cubic-bezier(0.65, 0, 0.35, 1) 0.85s;
+}
+
+.about-stage.is-in .about-fx-underline > svg path + path {
+  transition-delay: 1.25s;
+}
+
+.about-fx-circle svg {
+  left: -8%;
+  width: 116%;
+  top: -18%;
+  height: 138%;
+}
+
+.about-fx-circle svg path {
+  stroke-width: 3.6;
+}
+
+.about-stage.is-in .about-fx-circle svg path {
+  stroke-dashoffset: 0;
+  transition: stroke-dashoffset 1s cubic-bezier(0.6, 0, 0.3, 1) 0.9s;
+}
+
+/* chase — under the sketchy underline, two doodled stick figures run
+   the length of the phrase, one chasing the other, and it ends right under
+   the last word, "feeling", when the chaser catches the runner. Plays once
+   per visit:
+
+     1.9s  underline done; both set off (two-drawing run cycle, 0.26s)
+     →     the chaser gains slowly, then closes the gap with a final burst,
+           while the pair decelerates to a stop under --catch (the centre
+           of "feeling", measured in About.jsx)
+     5.5s  caught: the runner freezes mid-stride; the chaser's frames swap
+           for a lunge with his arm hooked over the runner's neck
+
+   The whole doodle "boils" through an SVG turbulence filter, like frames
+   of hand-drawn animation. */
+.about-chase {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 0.5em);
+  height: 1.9em;
+  pointer-events: none;
+}
+
+.about-chase__track {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.about-stage.is-in .about-chase__track {
+  animation: about-chase-run 3.6s cubic-bezier(0.3, 0.1, 0.35, 1) 1.9s forwards;
+}
+
+/* The runner's box ends 0.445em left of --catch, which centres the pair
+   (runner 1.425em wide, chaser 0.534em behind him) under the word. */
+@keyframes about-chase-run {
+  0% {
+    transform: translateX(-3em);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(calc(var(--catch, 30%) - 0.445em));
+    opacity: 1;
+  }
+}
+
+.about-runner {
+  position: absolute;
+  bottom: 0;
+  height: 100%;
+  aspect-ratio: 24 / 32;
+  overflow: visible;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.about-runner--lead {
+  left: 0;
+  stroke: #f4ede4;
+}
+
+/* Starts well behind; ends 9 viewBox units (0.534em, of a 1.425em-wide
+   box) behind the runner — where the hooked arm lands on his neck. */
+.about-runner--chaser {
+  left: -2.6em;
+  stroke: #ff6b5e;
+}
+
+.about-stage.is-in .about-runner--chaser {
+  animation: about-close 3.6s cubic-bezier(0.55, 0, 0.75, 1) 1.9s forwards;
+}
+
+@keyframes about-close {
+  to {
+    transform: translateX(2.066em);
+  }
+}
+
+/* Run cycle: the two frames trade places; a small bob on each stride. */
+.about-runner__f1,
+.about-runner__caught {
+  opacity: 0;
+}
+
+.about-stage.is-in .about-runner__f0 {
+  animation: about-frame 0.26s linear infinite;
+}
+
+.about-stage.is-in .about-runner__f1 {
+  animation: about-frame 0.26s linear infinite reverse;
+}
+
+.about-stage.is-in .about-runner__run {
+  animation:
+    about-bob 0.13s ease-in-out infinite alternate,
+    about-hide 0.01s linear 5.5s forwards;
+}
+
+.about-stage.is-in .about-runner__caught {
+  animation: about-show 0.01s linear 5.5s forwards;
+}
+
+/* The chaser's legs go a half-step out of phase, so they don't march. */
+.about-stage.is-in .about-runner--chaser .about-runner__f0,
+.about-stage.is-in .about-runner--chaser .about-runner__f1 {
+  animation-delay: -0.07s;
+}
+
+@keyframes about-frame {
+  0%,
+  49.9% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes about-bob {
+  to {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes about-hide {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes about-show {
+  to {
+    opacity: 1;
+  }
+}
+
+/* A long paragraph gets body-copy treatment: smaller, airier, a touch
+   softer — it has to read as a paragraph, not a slogan. */
+.about-para--long {
+  font-size: clamp(14px, 1.05vw, 16px);
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* Stage transition — a quiet vertical hand-off.
+
+   The current block drifts up a little and fades; the next drifts up into
+   place from just below. Short distances and soft curves keep it subtle —
+   it should feel like the copy breathing forward, not sliding around.
+   Scrolling back up runs it downward: "future" waits below, "past" above. */
+.about-stage {
+  opacity: 0;
+  transform: translate3d(0, 20px, 0);
+  transition:
+    opacity 0.4s cubic-bezier(0.4, 0, 0.6, 1),
+    transform 0.5s cubic-bezier(0.4, 0, 0.6, 1);
+  will-change: opacity, transform;
+}
+
+.about-stage.is-past {
+  transform: translate3d(0, -20px, 0);
+}
+
+.about-stage.is-in {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.2s,
+    transform 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.2s;
+}
+
+/* ------------------------------------------------------------------ */
+/* Contact                                                             */
+/* ------------------------------------------------------------------ */
+
+.about-contact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.about-contact.is-in {
+  pointer-events: auto;
+}
+
+/* "Open to work" — a quiet pill with a live dot, standing in for a label.
+   The dot's ring pings outward on a slow loop, the universal "online"
+   signal, so it reads as a status rather than decoration. */
+.about-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.3);
+  color: #a7f3d0;
+  font: 500 12px/1 Geist, Helvetica, Arial, sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.about-badge__dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.8);
+}
+
+.about-badge__dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #34d399;
+  animation: about-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes about-ping {
+  75%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+.about-contact__heading {
+  margin: 0;
+  font-family: Geist, Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: clamp(22px, 2.1vw, 30px);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  color: #fff;
+}
+
+.about-contact__line {
+  display: block;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Quiet by default — hairline outline, dim glyph — and only on hover does
+   each one take its brand colour. The heading is the call to action; the
+   icons are just the ways to answer it. */
+.about-link {
+  --brand: #fff;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
+  transition:
+    opacity 0.25s ease,
+    transform 0.3s cubic-bezier(0.4, 0, 1, 1),
+    color 0.25s,
+    background 0.25s,
+    box-shadow 0.25s;
+}
+
+.about-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+.about-contact.is-in .about-link {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.5s ease,
+    transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.25s,
+    background 0.25s,
+    box-shadow 0.25s;
+  transition-delay: calc(360ms + var(--j) * 60ms), calc(360ms + var(--j) * 60ms), 0s, 0s, 0s;
+}
+
+.about-contact.is-in .about-link:hover,
+.about-contact.is-in .about-link:focus-visible {
+  color: var(--brand);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 60%, transparent);
+  transform: translate3d(0, -2px, 0);
+  transition-delay: 0s;
+}
+
+.about-link[aria-disabled] {
+  cursor: default;
+}
+
+.about-link--instagram { --brand: #f56592; }
+.about-link--x { --brand: #fff; }
+.about-link--linkedin { --brand: #5aa7f0; }
+.about-link--substack { --brand: #ff8a4c; }
+.about-link--github { --brand: #fff; }
+.about-link--email { --brand: #ff5a50; }
+
+/* ------------------------------------------------------------------ */
+/* Stage ticks                                                         */
+/* ------------------------------------------------------------------ */
+
+.about-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+
+.about-progress[data-on] {
+  opacity: 1;
+}
+
+.about-progress span {
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.22);
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1), background 0.4s;
+}
+
+.about-progress span {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The active tick fills over its beat's dwell (--dwell, set from JS) — the
+   visible reason the scroll is waiting. */
+.about-progress span.on {
+  width: 30px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.about-progress span.on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  transform-origin: left center;
+  animation: about-fill var(--dwell, 1.5s) linear forwards;
+}
+
+@keyframes about-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Lightbox                                                            */
+/* ------------------------------------------------------------------ */
+
+.about-lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 300; /* over the photos and the copy */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 5, 4, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: zoom-out;
+  animation: about-fade 0.25s ease-out;
+}
+
+.about-lightbox figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  cursor: default;
+  animation: about-pop 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.about-lightbox img {
+  display: block;
+  max-width: min(88vw, 520px);
+  max-height: 76vh;
+  border-radius: 14px;
+  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.8);
+}
+
+.about-lightbox figcaption {
+  font: 600 11px/1 "Courier New", monospace;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+@keyframes about-fade {
+  from { opacity: 0; }
+}
+
+@keyframes about-pop {
+  from { opacity: 0; transform: scale(0.9); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Meta row                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Bottom-left beside the hint on a wide screen; stacked above it on a
+   phone, where the two would otherwise run into each other. */
+.about-meta {
+  left: 32px;
+  bottom: 28px;
+}
+
+@media (max-width: 700px) {
+  .about-meta {
+    left: 0;
+    right: 0;
+    bottom: 50px;
+    justify-content: center;
+  }
+
+  .about-link {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-stage.is-in .about-fx-magic__text {
+    transition: none;
+  }
+
+  .about-name,
+  .about-badge__dot::after,
+  .about-stage.is-in .about-chase__track,
+  .about-stage.is-in .about-runner--chaser,
+  .about-stage.is-in .about-runner__f0,
+  .about-stage.is-in .about-runner__f1,
+  .about-stage.is-in .about-runner__run,
+  .about-stage.is-in .about-runner__caught {
+    animation: none;
+  }
+
+  /* Straight to the ending: caught, under "feeling". */
+  .about-stage.is-in .about-chase__track {
+    opacity: 1;
+    transform: translateX(calc(var(--catch, 30%) - 0.445em));
+  }
+
+  .about-stage.is-in .about-runner--chaser {
+    transform: translateX(2.066em);
+  }
+
+  .about-stage.is-in .about-runner__run {
+    opacity: 0;
+  }
+
+  .about-stage.is-in .about-runner__caught {
+    opacity: 1;
+  }
+
+  .about-fx-mark,
+  .about-stage.is-in .about-fx-mark,
+  .about-fx-underline > svg path,
+  .about-fx-circle svg path {
+    transition: none !important;
+  }
+
+  .about-stage,
+  .about-stage.is-past,
+  .about-stage.is-in {
+    transform: none;
+    transition: opacity 0.3s ease;
+  }
+}

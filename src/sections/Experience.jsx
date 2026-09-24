@@ -1,305 +1,313 @@
 import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
 import { EXPERIENCE } from "../data/experience";
 import { ACCENT } from "../theme";
-import juspayLogoUrl from "../assets/juspay-logo.svg";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
-
-// Maps an experience entry's `logo` field to its actual asset. Only current
-// employment gets a real logo — everything else falls back to a generated
-// monogram, rather than inventing marks for companies that aren't real.
-const LOGOS = { juspay: juspayLogoUrl };
+import { JOURNEY_POSES } from "../components/runner";
+import "../experience.css";
 
 /**
- * EXPERIENCE — a flight down the spiral arm of a barred spiral galaxy.
+ * EXPERIENCE — a run across the companies, hung in space like stars.
  *
- * Everything on screen is generated: there is no galaxy image anywhere in
- * this file. One buffer of points, placed into four logarithmic arms around
- * a bulge and a central bar, drawn in a single pass. Scrolling flies the
- * camera along a spiral of its own — winding inward and sinking into the
- * disc at the same time — and each role is a star it passes on the way down.
+ * Each company name is spelled out in the sun's blocks (same square pixels,
+ * hairline gaps and heat palette as SunHero) and left floating somewhere
+ * along a zig-zag that heads off into the dark. Scrolling draws a dotted
+ * line from the current name out to the next one, and the little doodled
+ * runner from About sets off along it; the camera follows him, pulling in
+ * close to each name as he reaches it. The run ends at Juspay, arms up —
+ * and the camera, instead of stopping, punches on down the corridor into
+ * About.
  *
- * Three decisions carry the whole thing:
+ * How it's built:
  *
- *  1. **Nothing per-star runs on the CPU.** The arms are built once into a
- *     static buffer. Rotation is a property on the parent object and
- *     twinkle is a function of time inside the vertex shader, so a frame
- *     costs one draw call no matter how many stars are in it. Animating
- *     26,000 points in JavaScript would spend the entire frame budget
- *     writing to an array before drawing anything.
- *  2. **The roles are DOM, not geometry.** In 3D each one is a single
- *     additive sprite on the arm; the words live in HTML on top. Text baked
- *     into a canvas texture and flown past at this speed is mush at any
- *     resolution you can afford, and it costs a megabyte of texture memory
- *     to be mush. HTML text is sharp on every display and free.
- *  3. **Star count follows the device.** See LOW_POWER — a phone gets a
- *     smaller buffer and a lower pixel ratio, because additive blending is
- *     fill-rate bound and fill rate is exactly what a phone doesn't have.
+ *  - **Words are sampled, not drawn.** Each name is rendered once into an
+ *    offscreen canvas and read back on a block grid; every covered cell
+ *    becomes a block, placed in world space around that word's centre.
+ *  - **One camera, a single divide.** Everything — blocks, line, dust, the
+ *    runner's feet — is a world point projected as (p - cam).xy * F / dz.
+ *    At a hold the camera sits exactly F in front of the word, so the word
+ *    renders at the size it was sampled at.
+ *  - **Plain canvas 2D, bucketed by colour.** Same trick as SunHero: one
+ *    path per palette step, filled once each.
+ *  - **The runner is DOM.** An SVG with the same hand-drawn line boil as in
+ *    About, positioned every frame at the projected point on the line. His
+ *    stride is driven by distance run, not time, so scrolling back runs him
+ *    backwards and stopping stops him.
  *
  * Driven by real document scroll via useScrollProgressRef — the same single
  * timeline every other section reads. See Projects.jsx for why nothing here
  * captures the wheel.
  */
 
-// --- The galaxy ------------------------------------------------------------
-const GALAXY_RADIUS = 18;
-const CORE_RADIUS = 2.6;
-// Four lanes — two major, two minor between them (see buildGalaxy). What
-// decides whether a spiral reads as a spiral isn't the arm count, it's the
-// ratio between how far apart adjacent windings sit and how far stars
-// scatter off the spine. Windings sit (2*PI/SPIN)/ARMS apart, so doubling
-// the arms halves the gap — but lowering SPIN buys it straight back. At
-// SPIN 0.30 four arms sit 5.2 units apart against 1.2 of scatter, a ratio
-// of 4.5: better separated than the two-arm version was, with twice the
-// structure on screen.
-const ARMS = 4;
-// Radians of winding per unit of radius. This single number is the
-// difference between a tight pinwheel and a nearly circular disc.
-// Winding rate, and the lever that pays for the extra arms above.
-const SPIN = 0.3;
-const BAR_LENGTH = 3.4; // the "barred" in barred spiral — the Milky Way has one
+const COUNT = EXPERIENCE.length;
+// --- The hand-off to About -------------------------------------------------
+// After the last company the camera doesn't stop: it eases to the middle of
+// the corridor and carries straight on, the names falling away past the lens,
+// toward the spot where About's globe opens — and About fades in around it
+// while the camera is still moving, so its own flight picks up the motion.
+//
+// About opens with its globe 0.05 * min(1, aspect) of the viewport below
+// mid-screen (see its opening camera in About.jsx), so that's where the
+// camera's line of flight is steered to.
+const ABOUT_DROP = 0.05;
+const OUTRO = 1.2; // slots of scroll for the flight out
+// Slots past the end of it. Short on purpose: About's fade-in takes the last
+// fifth of a viewport of this section's scroll, so it overlaps the end of
+// the flight rather than following a pause.
+const TAIL = 0.1;
+const OUT_DEPTH = 4; // how far the camera travels on the way out, in F
+// And on the way in: while this section fades in over Projects its camera
+// is already moving, so the handover carries Projects' forward motion
+// instead of freezing on a still frame.
+const PRE_ROLL = 1.2; // in F
 
-// --- The flight ------------------------------------------------------------
-// Both radius and height decay exponentially rather than linearly. A linear
-// approach covers most of the distance early and then crawls the last
-// stretch, because what reads as speed is the *ratio* of distance travelled
-// to distance remaining, not the distance itself.
-const CAM_R0 = 27;
-const CAM_R1 = 1.7;
-const CAM_Y0 = 10.5;
-const CAM_Y1 = 0.5;
-// More winding than the galaxy's own arms have, on purpose — the flight
-// should feel like it's corkscrewing down through the structure rather than
-// coasting along one arm.
-const TURNS = 3.1;
-// How far ahead along its own path the camera looks. This is what turns an
-// orbit into a flight: aiming at the core keeps the core pinned dead centre
-// and the whole galaxy just rotates around it like a turntable, with almost
-// no optical flow. Aiming down the spiral instead sends stars streaming past
-// the edges of frame, which is the entire sensation of moving.
-const LOOK_AHEAD = 0.075;
+// Straight from SunHero — hot core through to the cold rim.
+const PALETTE = ["#ffe800", "#ffc400", "#ff8a00", "#ff4d0d", "#b33100", "#6b1d00"];
+const INK = "#f4ede4"; // the runner's colour, from About — also the line's
 
-const SCROLL_LENGTH_VH = EXPERIENCE.length * 95;
-const SMOOTHING = 5;
+const FONT = "'Arial Black', 'Helvetica Neue', Helvetica, Arial, sans-serif";
+const GAP_RATIO = 0.1; // hairline between blocks, as in SunHero
+const LINE_HEIGHT = 0.92; // em, for names that wrap on a phone
 
-const clamp01 = (v) => Math.min(1, Math.max(0, v));
+const DITHER = 0.28;
+const SHIMMER = 0.05;
+const SHIMMER_FPS = 12; // chunky on purpose, like the sun
+
+// Fraction of each leg's scroll spent standing at a company. Without it the
+// page is always mid-run and never lets you read anything.
+const DWELL = 0.45;
+const SMOOTHING = 5; // per second — how tightly the camera follows the scroll
+
+const APPROACH = 2.2; // how far back (in F) the section opens before the first name
+// Laid out the way Projects lays out its cards: a corridor flown straight
+// down, with each company alternating left and right of the path and close
+// enough behind the last that the next few are always in view ahead.
+const LEG_DEPTH = 0.95; // how far each company sits behind the last, in F
+const SIDE = 0.25; // how far off the path each sits, in viewport widths
+const SIDE_NARROW = 0.16;
+// The camera flies down the middle, but leans this share of the way toward
+// the side the runner is on, so the company he's at is framed, not cropped.
+const CAM_FOLLOW = 0.3;
+// A phone has no room to spare either side, so there the camera swings most
+// of the way over to each company.
+const CAM_FOLLOW_NARROW = 0.65;
+// On a phone the name you're at is the only one worth reading; the rest
+// shrink to this share of their size until you reach them.
+const DISTANT_SCALE_NARROW = 0.5;
+// Depth (in F) over which names further down the corridor condense out of
+// the dark: the next one is fully there, the one after it only a glimmer.
+const FOG = [2.0, 2.5];
+// The story: how he gets from each company to the next, in order. Runs out
+// of legs? It starts over.
+const LEGS = ["run", "cycle", "surf", "fly"];
+// Steps per leg for the modes animated by distance travelled (scroll back
+// and he pedals backwards); the others animate on the clock instead, since
+// a cape still flutters and a wave still rolls when you stop scrolling.
+const STRIDES = { run: 22, cycle: 14 };
+const FLUTTER = { surf: 5, fly: 7 }; // frames per second
+const LIFT = 1.5; // how high the flight arcs above the line, in figure heights
+
+// Every pose as one flat list, so the DOM can mount them all once and the
+// frame loop only flips which one is showing.
+const POSES = Object.entries(JOURNEY_POSES).flatMap(([name, v]) =>
+  Array.isArray(v[0]) ? v.map((parts, frame) => ({ name, frame, parts })) : [{ name, frame: 0, parts: v }]
+);
+const poseAt = (name, frame = 0) => POSES.findIndex((q) => q.name === name && q.frame === frame);
+const STAND = poseAt("stand");
+const CHEER = poseAt("cheer");
+
+const DOT_SPACING = 2.6; // line dots, in blocks
+const DUST_COUNT = 320;
+
+const LENS_RADIUS = 110; // px
+const LENS_GROW = 0.8;
+const PARALLAX = 0.035; // camera sway toward the pointer, in viewport widths
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const smoothstep = (e0, e1, x) => {
-  const t = clamp01((x - e0) / (e1 - e0));
+  const t = clamp((x - e0) / (e1 - e0), 0, 1);
   return t * t * (3 - 2 * t);
 };
+const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
-// Exponential spiral, shared by the camera and (at an offset) the roles.
-const camRadius = (p) => CAM_R0 * Math.pow(CAM_R1 / CAM_R0, p);
-const camHeight = (p) => CAM_Y0 * Math.pow(CAM_Y1 / CAM_Y0, p);
-const camAngle = (p) => p * TURNS * Math.PI * 2;
+// Scroll progress (0..1) -> "raw" position along the run: -1 is the opening
+// approach, 0..COUNT-1 the companies. The camera uses a stepped version with
+// a hold at each whole number; the line uses raw, so it can start drawing
+// toward the next name while you're still standing at this one.
+const H = DWELL / 2;
+// A long stretch of scroll per leg of the run, plus the opening approach,
+// the flight out, and the hold while About takes over.
+const SLOTS = COUNT + H + OUTRO + TAIL;
+const SCROLL_LENGTH_VH = 100 + SLOTS * 110;
+const toRaw = (p) => p * SLOTS - 1;
+// Where the flight out begins: the end of the hold at the last company.
+const OUT_AT = COUNT - 1 + H;
+const toSlot = (raw) => {
+  // The opening approach doesn't hold at its start the way the stops do —
+  // it's already under way when the section arrives, and eases out into
+  // the first company.
+  if (raw < -H) {
+    const t = clamp((raw + 1) / (1 - H), 0, 1);
+    return -1 + (1 - Math.pow(1 - t, 3));
+  }
+  const i = Math.floor(raw);
+  return clamp(i + smoothstep(H, 1 - H, raw - i), -1, COUNT - 1);
+};
 
-// Where each role sits along that flight. Kept clear of both ends so the
-// first isn't on screen before the viewer has seen the galaxy at all, and
-// the last isn't still arriving as the section hands over.
-const nodeProgress = (i) =>
-  EXPERIENCE.length > 1 ? 0.12 + (i * 0.76) / (EXPERIENCE.length - 1) : 0.5;
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hash(x, y) {
+  const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+// Two lines, split at whichever space balances them best. Only used on a
+// phone, where one line would shrink a long name down to a handful of rows.
+function splitLines(text) {
+  const words = text.split(" ");
+  if (words.length < 2 || text.length < 9) return [text];
+  let best = [text];
+  let bestDiff = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(" ");
+    const b = words.slice(i).join(" ");
+    const diff = Math.abs(a.length - b.length);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = [a, b];
+    }
+  }
+  return best;
+}
 
 /**
- * Builds the whole galaxy into one set of typed arrays.
- *
- * Four populations, blended by weight rather than drawn separately — a
- * single buffer is one draw call, and the populations only differ in how
- * their positions are sampled:
- *
- *   disc   the arms themselves, on a logarithmic spiral
- *   bulge  the dense flattened sphere at the centre
- *   bar    the straight span through the core
- *   halo   sparse faint stars well outside the disc
+ * Sets `lines` as large as fits in maxW x maxH and reads them back on a grid
+ * of `block`-sized cells. Returns the covered cells' centres relative to the
+ * word's centre, in CSS px at a scale of 1.
  */
-function buildGalaxy(count) {
-  const position = new Float32Array(count * 3);
-  const color = new Float32Array(count * 3);
-  const size = new Float32Array(count);
-  const seed = new Float32Array(count);
+function sampleWord(block, maxW, maxH, lines) {
+  const SUB = 4; // samples per block edge
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = `900 100px ${FONT}`;
+  const widest = Math.max(...lines.map((l) => probe.measureText(l).width));
+  const size = Math.min((100 * maxW) / widest, maxH / (lines.length * LINE_HEIGHT));
 
-  // Two colours and the ramp between them: warm old stars at the centre,
-  // hot young ones in the arms. That's the real physical gradient, and a
-  // third band in the middle only fought both ends of it.
-  const coreCol = new THREE.Color("#ffd2a0"); // old, warm core stars
-  const midCol = new THREE.Color("#fff2e2");
-  const armCol = new THREE.Color("#a3c9ff"); // hot young arm stars, light blue
-  const hiiCol = new THREE.Color("#ff6f91"); // star-forming knots
-  const c = new THREE.Color();
+  const cols = Math.ceil((widest * size) / 100 / block) + 2;
+  const rows = Math.ceil((lines.length * LINE_HEIGHT * size) / block) + 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = cols * SUB;
+  canvas.height = rows * SUB;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.scale(SUB / block, SUB / block);
+  ctx.font = `900 ${size}px ${FONT}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#fff";
+  const midY = (rows * block) / 2;
+  lines.forEach((line, i) => {
+    const y = midY + (i - (lines.length - 1) / 2) * LINE_HEIGHT * size;
+    ctx.fillText(line, (cols * block) / 2, y);
+  });
 
-  for (let i = 0; i < count; i++) {
-    let x;
-    let y;
-    let z;
-    let r;
-
-    const roll = Math.random();
-    let faint = 1; // inter-arm stars are dimmed so the arms stay dominant
-
-    if (roll < 0.09) {
-      // Bulge: flattened sphere, densest at the centre.
-      r = Math.pow(Math.random(), 2.1) * CORE_RADIUS;
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      x = r * Math.sin(phi) * Math.cos(theta);
-      y = r * Math.cos(phi) * 0.5; // flattened — a bulge, not a ball
-      z = r * Math.sin(phi) * Math.sin(theta);
-    } else if (roll < 0.145) {
-      // Bar: a straight span through the core, thin in the other two axes.
-      const along = (Math.random() - 0.5) * 2 * BAR_LENGTH;
-      x = along;
-      y = (Math.random() - 0.5) * 0.36;
-      z = (Math.random() - 0.5) * 1.5 * (1 - Math.abs(along) / BAR_LENGTH) ;
-      r = Math.hypot(x, z);
-    } else if (roll < 0.97) {
-      // Disc: the arms. Classic logarithmic spiral — the branch sets which
-      // arm, and the spin term winds it further the further out it sits.
-      const t = Math.pow(Math.random(), 0.5); // bias inward: discs are denser at the middle
-      r = CORE_RADIUS * 0.45 + t * GALAXY_RADIUS;
-
-      // A minority of disc stars belong to no arm at all. Real discs have a
-      // faint smooth population between the arms, and without it the gaps
-      // read as empty slots cut out of a disc rather than as darker lanes
-      // between brighter ones — which is what actually makes arms look like
-      // arms instead of like spokes.
-      const interArm = Math.random() < 0.24;
-      if (interArm) faint = 0.5;
-      // Odd lanes are the minor arms: same geometry, fewer and fainter
-      // stars. Four equal arms read as a pinwheel; a major/minor alternation
-      // is what real multi-arm discs look like and it keeps the two dominant
-      // arms legible as the structure while the others fill the disc.
-      const lane = i % ARMS;
-      const minor = lane % 2 === 1;
-      if (minor) faint = 0.62;
-      const branch = (lane / ARMS) * Math.PI * 2;
-      const angle = interArm ? Math.random() * Math.PI * 2 : branch + r * SPIN;
-      // Arm width is a ratio against the 9.2-unit gap between windings, not
-      // an absolute. 0.135 puts the arm's body at about a quarter of the gap
-      // — wide enough to have mass and an inner/outer edge, narrow enough
-      // that the dark lane between arms survives. Any tighter and the arms
-      // come out as bright threads with a galaxy-shaped hole around them.
-      const armWidth = interArm ? 0.34 : minor ? 0.075 : 0.065;
-
-      // Scatter, raised to a power so most stars sit close to the arm's
-      // spine and a few stray far. Uniform scatter gives fuzzy tubes; this
-      // is what gives an arm a bright spine and a soft edge.
-      const scatter = (axis) =>
-        Math.pow(Math.random(), 2.4) * (Math.random() < 0.5 ? 1 : -1) * r * axis;
-
-      x = Math.cos(angle) * r + scatter(armWidth);
-      y = scatter(0.028); // the disc is thin — this is what keeps it a disc
-      z = Math.sin(angle) * r + scatter(armWidth);
-    } else {
-      // Halo: sparse, faint, well outside everything else. Stops the disc
-      // from ending against nothing.
-      r = GALAXY_RADIUS * (1 + Math.random() * 1.6);
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      x = r * Math.sin(phi) * Math.cos(theta);
-      y = r * Math.cos(phi) * 0.55;
-      z = r * Math.sin(phi) * Math.sin(theta);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const pts = [];
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      let sum = 0;
+      for (let sy = 0; sy < SUB; sy++) {
+        const row = (r * SUB + sy) * canvas.width;
+        for (let sx = 0; sx < SUB; sx++) sum += data[(row + c * SUB + sx) * 4 + 3];
+      }
+      if (sum / (SUB * SUB * 255) > 0.4) {
+        const y = (r - rows / 2 + 0.5) * block;
+        pts.push((c - cols / 2 + 0.5) * block, y);
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+      }
     }
-
-    position[i * 3] = x;
-    position[i * 3 + 1] = y;
-    position[i * 3 + 2] = z;
-
-    // Colour by distance from the centre: warm old core, white middle,
-    // blue-white arms. This gradient is most of what makes a field of dots
-    // read as a galaxy rather than as confetti.
-    const f = clamp01(r / GALAXY_RADIUS);
-    if (f < 0.34) c.copy(coreCol).lerp(midCol, f / 0.34);
-    else c.copy(midCol).lerp(armCol, (f - 0.34) / 0.66);
-
-    // A few pink star-forming knots out in the arms, and the occasional
-    // red giant. Both are real, and both stop the gradient reading as a
-    // smooth airbrush.
-    const tint = Math.random();
-    if (tint > 0.988 && f > 0.3) c.copy(hiiCol);
-    else if (tint > 0.975) c.lerp(coreCol, 0.85);
-
-    color[i * 3] = c.r;
-    color[i * 3 + 1] = c.g;
-    color[i * 3 + 2] = c.b;
-
-    // Mostly tiny with a few bright ones — a field of identically sized
-    // dots is the single most artificial-looking thing in a starfield.
-    size[i] = (0.55 + Math.pow(Math.random(), 3.2) * 2.8) * faint;
-    seed[i] = Math.random();
   }
-
-  return { position, color, size, seed };
+  return {
+    xy: Float32Array.from(pts),
+    n: pts.length / 2,
+    halfW: (cols * block) / 2,
+    // The inked extent, not the canvas box — the runner stands under the
+    // letters themselves, not under empty padding.
+    halfH: Math.max(-top, bottom) + block / 2,
+  };
 }
 
-// A bright star with a cross glint, for the handful of foreground stars that
-// sit in front of everything. Round dots alone never read as *brilliant* —
-// the glint is the cue that something is blowing out the exposure.
-function makeGlintTexture() {
-  const s = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = s;
-  const ctx = canvas.getContext("2d");
-  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s * 0.22);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.4, "rgba(220,235,255,0.5)");
-  g.addColorStop(1, "rgba(180,210,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, s, s);
-
-  ctx.globalCompositeOperation = "lighter";
-  for (const vertical of [false, true]) {
-    const grad = vertical
-      ? ctx.createLinearGradient(0, 0, 0, s)
-      : ctx.createLinearGradient(0, 0, s, 0);
-    grad.addColorStop(0, "rgba(255,255,255,0)");
-    grad.addColorStop(0.5, "rgba(255,255,255,0.75)");
-    grad.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = grad;
-    if (vertical) ctx.fillRect(s / 2 - 1.5, 0, 3, s);
-    else ctx.fillRect(0, s / 2 - 1.5, s, 3);
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+// "Aug 2022 — Jan 2023" -> "AUG ’22", for the timeline under the run.
+// Several roles can start in the same year, so the year alone isn't enough.
+function tickLabel(period) {
+  const start = period.split("—")[0].trim();
+  const m = start.match(/^([A-Za-z]{3})[a-z]*\s+(\d{4})$/);
+  return m ? `${m[1].toUpperCase()} ’${m[2].slice(2)}` : start;
 }
 
-// Soft round dot, drawn once and shared by every sprite that needs a glow.
-function makeGlowTexture() {
-  const s = 128;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = s;
-  const ctx = canvas.getContext("2d");
-  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.25, "rgba(255,255,255,0.5)");
-  g.addColorStop(0.55, "rgba(255,255,255,0.12)");
-  g.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, s, s);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+// Types a string in through a run of block glyphs, left to right — the HUD's
+// way of saying the value just changed.
+const GLYPHS = "█▓▒░/\\<>_-+=#";
+function Decode({ text, className, style }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      el.textContent = text;
+      return;
+    }
+    const start = performance.now();
+    const DURATION = 520;
+    let raf;
+    const step = (now) => {
+      const t = clamp((now - start) / DURATION, 0, 1);
+      const shown = Math.floor(t * text.length);
+      let out = text.slice(0, shown);
+      for (let i = shown; i < text.length; i++) {
+        out += text[i] === " " ? " " : GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+      }
+      el.textContent = out;
+      if (t < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [text]);
+  return <span ref={ref} className={className} style={style} aria-label={text} />;
 }
 
 export default function Experience() {
   const sectionRef = useRef(null);
   const stackRef = useRef(null);
-  const mountRef = useRef(null);
-  const counterRef = useRef(null);
-  const hintRef = useRef(null);
-  const panelRefs = useRef([]);
-  const dotRefs = useRef([]);
+  const canvasRef = useRef(null);
+  const hudRef = useRef(null);
+  const markerRef = useRef(null);
+  const topRef = useRef(null);
+  const timelineRef = useRef(null);
+  const runnerRef = useRef(null);
+  const flipRef = useRef(null);
+  // Every pose is mounted up front; the loop shows one at a time.
+  const poseRefs = useRef([]);
 
   const { progressRef, entryRef } = useScrollProgressRef(sectionRef);
 
+  const [active, setActive] = useState(0);
   const [everActive, setEverActive] = useState(false);
   const activeRef = useRef(false);
   const rafIdRef = useRef(null);
   const tickRef = useRef(null);
 
-  // Same deferral as Projects: don't build a WebGL scene, or run its render
-  // loop, until this section is actually near the viewport — otherwise every
-  // 3D section on the page is rendering at once from first paint.
+  // Don't set anything up, or run the loop, until this section is near the
+  // viewport — otherwise every canvas on the page renders from first paint.
   useEffect(() => {
     const el = sectionRef.current;
     if (!el) return;
@@ -321,403 +329,450 @@ export default function Experience() {
 
   useEffect(() => {
     if (!everActive) return;
-    const mount = mountRef.current;
-    let width = mount.clientWidth;
-    let height = mount.clientHeight;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Additive blending is fill-rate bound, and fill rate is the one thing
-    // a phone GPU is short of. Both levers here are about pixels touched
-    // per frame, not about geometry: fewer stars, and fewer physical pixels
-    // under each of them.
-    const LOW_POWER =
-      width < 760 ||
-      (navigator.hardwareConcurrency || 8) <= 4 ||
-      window.matchMedia("(pointer: coarse)").matches;
-    const STAR_COUNT = LOW_POWER ? 26000 : 52000;
+    let width = 0;
+    let height = 0;
+    let dpr = 1;
+    let narrow = false;
+    let block = 4;
+    let F = 1000; // focal length, px: a point F in front of the camera is at scale 1
+    let runH = 36; // runner height, world px
+    let words = [];
+    // Per company: world centre (x, y, z) and the point on the line under it
+    // where the runner stands.
+    let centres = [];
+    let anchors = [];
+    let dust = null;
+    const layout = () => {
+      width = canvas.clientWidth;
+      height = canvas.clientHeight;
+      if (!width || !height) return;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(55, width / height, 0.5, 220);
+      narrow = width < 760;
+      F = Math.max(width, height) * 1.1;
+      block = narrow ? Math.max(2.2, width / 150) : Math.max(3, Math.min(6, width / 320));
+      runH = narrow ? 30 : clamp(height * 0.045, 30, 46);
+      const maxW = width * (narrow ? 0.72 : 0.4);
+      const maxH = height * (narrow ? 0.16 : 0.15);
 
-    // How far back the whole flight sits, as a multiple of its desktop path.
-    //
-    // A portrait viewport's horizontal field of view is a fraction of its
-    // vertical one, so a path framed on a desktop puts a phone *inside* the
-    // disc for most of the section — close enough that the arms fall outside
-    // frame entirely and all that's left is scattered dots. Flying the same
-    // path further out is what restores the galaxy as an object you can see
-    // the shape of.
-    let fit = 1;
-    // reframe() runs once before the markers exist, and placeMarkers()
-    // closes over a `const` still in its temporal dead zone at that point,
-    // so the first call has to be skipped explicitly. `typeof` is no help:
-    // touching a TDZ binding throws even inside typeof.
-    let markersBuilt = false;
-    // How much of the look-ahead survives. On a wide screen the camera aims
-    // down its own path and the galaxy sits off-centre, which is what makes
-    // the flight feel flown. A portrait viewport has no horizontal room to
-    // spare, so the same aim throws the galaxy clean out of frame — on
-    // narrow screens the aim is pulled back toward the core and the sense of
-    // motion comes from the banking and the approach instead.
-    let aimK = 1;
-    let rollK = 1;
-    const reframe = () => {
-      const aspect = width / height;
-      const narrow = Math.min(1, Math.max(0, (1.3 - aspect) / 0.75)); // 0 wide -> 1 portrait
-      fit = aspect >= 1.3 ? 1 : Math.min(2.5, 1.3 / Math.max(aspect, 0.42));
-      aimK = 1 - narrow * 0.78;
-      rollK = 1 - narrow * 0.55;
-      if (markersBuilt) placeMarkers();
-    };
-    reframe();
-
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !LOW_POWER, // MSAA on a full-screen additive field is not cheap
-      alpha: true,
-      powerPreference: "high-performance",
-    });
-    renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, LOW_POWER ? 1.5 : 2));
-    renderer.setSize(width, height);
-    mount.appendChild(renderer.domElement);
-
-    // -------------------------------------------------------------
-    // The galaxy: one buffer, one material, one draw call.
-    // -------------------------------------------------------------
-    const { position, color, size, seed } = buildGalaxy(STAR_COUNT);
-    const galaxyGeo = new THREE.BufferGeometry();
-    galaxyGeo.setAttribute("position", new THREE.BufferAttribute(position, 3));
-    galaxyGeo.setAttribute("aColor", new THREE.BufferAttribute(color, 3));
-    galaxyGeo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
-    galaxyGeo.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
-
-    const galaxyMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uPixelRatio: { value: renderer.getPixelRatio() },
-        uFade: { value: 0 },
-      },
-      vertexShader: `
-        attribute vec3 aColor;
-        attribute float aSize;
-        attribute float aSeed;
-        uniform float uTime;
-        uniform float uPixelRatio;
-        varying vec3 vColor;
-        varying float vBright;
-        varying float vDepth;
-
-        void main() {
-          vColor = aColor;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          float depth = max(-mv.z, 0.6);
-          vDepth = depth;
-
-          // Twinkle lives here rather than in a JS loop: it's a pure
-          // function of time and a per-star seed, so the GPU evaluates it
-          // for free and the position buffer never has to be re-uploaded.
-          float tw = 0.72 + 0.28 * sin(uTime * (0.5 + aSeed * 1.6) + aSeed * 50.0);
-          vBright = tw;
-
-          // Perspective sizing, clamped hard. The ceiling matters more than
-          // it looks: this flight passes within a unit or two of individual
-          // stars, and without a cap each one swells into a screen-filling
-          // quad — the field stops reading as stars and starts reading as
-          // out-of-focus bokeh.
-          // Wider size range than before. Perspective already shrinks the
-          // far stars, but letting the near ones grow further is half of
-          // what separates foreground from background in a field that has
-          // no other occlusion cues to work with.
-          float s = aSize * uPixelRatio * (52.0 / depth) * tw;
-          gl_PointSize = clamp(s, 0.45, 12.0);
-          gl_Position = projectionMatrix * mv;
-        }
-      `,
-      fragmentShader: `
-        precision mediump float;
-        uniform float uFade;
-        varying vec3 vColor;
-        varying float vBright;
-        varying float vDepth;
-
-        void main() {
-          // Round the point off and give it a soft falloff. Square points
-          // are the other giveaway that a starfield is a buffer of dots.
-          vec2 d = gl_PointCoord - 0.5;
-          float r2 = dot(d, d);
-          if (r2 > 0.25) discard;
-          float a = smoothstep(0.25, 0.01, r2);
-
-          // Distance falloff — the depth cue that was missing. A star field
-          // where everything is equally bright reads as a flat sheet of
-          // dots no matter how correct the perspective is, because
-          // brightness is the cue the eye actually uses for depth once
-          // there's nothing to occlude anything else. Near stars now burn,
-          // far ones sink toward the background, and the disc gains a
-          // front and a back.
-          // Gentle rate and a floor that isn't near zero. Steeper than this
-          // and the establishing shot — where the camera is 30+ units out
-          // and every star is "far" — drains to almost nothing before the
-          // flight has started.
-          float dim = clamp(exp(-vDepth * 0.015), 0.28, 1.0);
-          // Slight cool shift with distance, the space equivalent of
-          // aerial perspective — reinforces the same ordering in hue.
-          vec3 col = mix(vColor * vec3(0.72, 0.8, 1.0), vColor, dim);
-
-          // Deliberately dim per star. Thousands of these overlap through
-          // the core, and additive blending accumulates — at full strength
-          // the centre saturates to flat white and every trace of spiral
-          // structure is lost inside it. Brightness has to come from the
-          // pile-up, not from each star.
-          gl_FragColor = vec4(col * vBright * 0.74 * dim, a * uFade);
-        }
-      `,
-      transparent: true,
-      depthWrite: false,
-      depthTest: false, // an additive star field has nothing to occlude
-      blending: THREE.AdditiveBlending,
-    });
-
-    const galaxy = new THREE.Points(galaxyGeo, galaxyMat);
-    // Tilted off the ecliptic so the flight arrives at an angle rather than
-    // straight down the axis — a disc seen face-on reads as a flat target.
-    galaxy.rotation.x = 0.12;
-    scene.add(galaxy);
-
-    // -------------------------------------------------------------
-    // Core bloom — one big additive sprite. Cheaper by orders of magnitude
-    // than a post-processing bloom pass, and at this distance visually
-    // indistinguishable from one.
-    // -------------------------------------------------------------
-    const glowTex = makeGlowTexture();
-    const coreGlow = new THREE.Sprite(
-      new THREE.SpriteMaterial({
-        map: glowTex,
-        color: new THREE.Color("#ffd9a8"),
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending,
-        opacity: 0,
-      })
-    );
-    coreGlow.scale.setScalar(CORE_RADIUS * 4.2);
-    galaxy.add(coreGlow);
-
-    // -------------------------------------------------------------
-    // Foreground glints — a handful of brilliant near stars in front of
-    // the disc. Cheap (a dozen sprites) and they do a lot: something has to
-    // be unambiguously *in front* for the haze behind it to read as depth.
-    // -------------------------------------------------------------
-    const glintTex = makeGlintTexture();
-    const glints = [];
-    for (let i = 0; i < (LOW_POWER ? 7 : 13); i++) {
-      const rnd = (n) => {
-        const x = Math.sin(i * 91.7 + n * 47.3) * 43758.5453;
-        return x - Math.floor(x);
-      };
-      const mat = new THREE.SpriteMaterial({
-        map: glintTex,
-        color: new THREE.Color().setHSL(0.58 + rnd(1) * 0.12, 0.3, 0.92),
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending,
-        opacity: 0,
-      });
-      const sp = new THREE.Sprite(mat);
-      const rr = GALAXY_RADIUS * (0.25 + rnd(2) * 0.95);
-      const th = rnd(3) * Math.PI * 2;
-      sp.position.set(
-        Math.cos(th) * rr,
-        (rnd(4) - 0.5) * GALAXY_RADIUS * 0.5,
-        Math.sin(th) * rr
+      words = EXPERIENCE.map((item) =>
+        sampleWord(block, maxW, maxH, narrow ? splitLines(item.company) : [item.company])
       );
-      const scale = 0.9 + rnd(5) * 1.9;
-      sp.scale.setScalar(scale);
-      galaxy.add(sp);
-      glints.push({ sp, mat, base: scale, phase: rnd(6) * 6.28 });
-    }
 
-    // -------------------------------------------------------------
-    // Role markers — one additive sprite each, sitting on the arm the
-    // camera is about to fly past.
-    // -------------------------------------------------------------
-    const markers = EXPERIENCE.map((item, i) => {
-      const p = nodeProgress(i);
-      // Inside the camera's own radius and a little ahead of it in angle,
-      // so it sits between the camera and the core — which is where the
-      // camera is looking, so it's reliably in frame as it's approached.
-      const r = camRadius(p) * fit * 0.62;
-      const a = camAngle(p) + 0.42;
-      const mat = new THREE.SpriteMaterial({
-        map: glowTex,
-        color: new THREE.Color(item.color),
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending,
-        opacity: 0,
-      });
-      const sprite = new THREE.Sprite(mat);
-      sprite.position.set(Math.cos(a) * r, camHeight(p) * fit * 0.45, Math.sin(a) * r);
-      galaxy.add(sprite);
-      return { sprite, mat, item, p };
-    });
+      // The zig-zag: left, right, left… each a little further down the
+      // corridor, with a touch of height jitter so the row doesn't read as
+      // ruled.
+      const side = width * (narrow ? SIDE_NARROW : SIDE);
+      const jitter = rng(7);
+      centres = words.map((_, i) => [
+        (i % 2 ? 1 : -1) * side,
+        // On a phone the names are nearly full-width, so there's no room to
+        // zig sideways alone — the path climbs as well, each company above
+        // the last, so the way ahead is always up the screen and never runs
+        // through the text underneath.
+        (narrow
+          ? -i * 0.16 + (jitter() - 0.5) * 0.03
+          : (i % 2 ? 1 : -1) * 0.06 + (jitter() - 0.5) * 0.05) * height,
+        i * LEG_DEPTH * F,
+      ]);
+      anchors = words.map((w, i) => [
+        centres[i][0],
+        centres[i][1] + w.halfH + runH * 1.35,
+        centres[i][2],
+      ]);
 
-    // Positions depend on `fit`, which changes with the viewport.
-    function placeMarkers() {
-      for (const m of markers) {
-        const r = camRadius(m.p) * fit * 0.62;
-        const a = camAngle(m.p) + 0.42;
-        m.sprite.position.set(Math.cos(a) * r, camHeight(m.p) * fit * 0.45, Math.sin(a) * r);
+      // A sparse field of specks through the whole volume — the only thing
+      // that tells you you're moving between names.
+      const rand = rng(42);
+      const span = centres[COUNT - 1];
+      dust = new Float32Array(DUST_COUNT * 4);
+      for (let k = 0; k < DUST_COUNT; k++) {
+        dust[k * 4] = (rand() * 2 - 1) * width * 1.4;
+        dust[k * 4 + 1] = (rand() * 2 - 1) * height * 1.1;
+        dust[k * 4 + 2] = -(APPROACH + PRE_ROLL) * F + rand() * (span[2] + (APPROACH + PRE_ROLL + OUT_DEPTH + 2) * F);
+        dust[k * 4 + 3] = rand();
       }
-    }
-    placeMarkers();
-    markersBuilt = true;
 
-    // -------------------------------------------------------------
-    // Pointer parallax — a small offset applied to the camera, never a
-    // rotation of the galaxy. Turning the galaxy on hover fights the
-    // scroll-driven flight; nudging the camera reads as leaning in.
-    // -------------------------------------------------------------
-    const state = { p: progressRef.current, px: 0, py: 0, camX: 0, camY: 0, active: -1 };
-    const onPointerMove = (e) => {
-      const rect = mount.getBoundingClientRect();
-      state.px = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      state.py = ((e.clientY - rect.top) / rect.height) * 2 - 1;
     };
-    const onPointerLeave = () => { state.px = 0; state.py = 0; };
-    mount.addEventListener("pointermove", onPointerMove);
-    mount.addEventListener("pointerleave", onPointerLeave);
+    layout();
+    const observer = new ResizeObserver(layout);
+    observer.observe(canvas);
 
-    const onResize = () => {
-      width = mount.clientWidth;
-      height = mount.clientHeight;
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      renderer.setSize(width, height);
-      galaxyMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
-      reframe();
+    // --- pointer ------------------------------------------------------------
+    let pointerX = 0;
+    let pointerY = 0;
+    let present = 0;
+    const onMove = (e) => {
+      const box = canvas.getBoundingClientRect();
+      pointerX = e.clientX - box.left;
+      pointerY = e.clientY - box.top;
+      // Touch has no hover, and a lens that pops up under a scrolling thumb
+      // just looks like a glitch.
+      present = e.pointerType === "mouse" ? 1 : 0;
     };
-    window.addEventListener("resize", onResize);
+    const onLeave = () => {
+      present = 0;
+    };
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerleave", onLeave);
 
-    // -------------------------------------------------------------
-    // Loop
-    // -------------------------------------------------------------
-    const clock = new THREE.Clock();
-    const target = new THREE.Vector3();
+    // --- frame --------------------------------------------------------------
+    const buckets = PALETTE.map(() => []);
+    const dots = [];
+    const specks = [];
+    let p = null;
+    let lens = 0;
+    let swayX = 0;
+    let swayY = 0;
+    let previous = 0;
+    let clock = 0;
+    let pose = -1;
+    let facing = 1;
 
+    const lerp3 = (a, b, t) => [
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t,
+    ];
 
-    const tick = () => {
-      if (!activeRef.current) { rafIdRef.current = null; return; }
+    const tick = (now) => {
+      if (!activeRef.current) {
+        rafIdRef.current = null;
+        previous = 0;
+        return;
+      }
       rafIdRef.current = requestAnimationFrame(tick);
-      const dt = Math.min(clock.getDelta(), 0.05);
-      const time = clock.getElapsedTime();
-
-      // Ease toward the real scroll position rather than snapping to it —
-      // wheel steps and trackpad flicks become one continuous glide.
-      const want = progressRef.current;
-      state.p += (want - state.p) * Math.min(1, dt * SMOOTHING);
-      if (Math.abs(want - state.p) < 0.0002) state.p = want;
-      const p = state.p;
-
-      // Differential rotation: the galaxy turns as a whole, slowly. Real
-      // discs shear (the inside laps the outside), but shearing a static
-      // buffer means rewriting every position every frame — the one thing
-      // this section is built to avoid.
-      galaxy.rotation.y += dt * 0.012;
-
-      galaxyMat.uniforms.uTime.value = time;
-      galaxyMat.uniforms.uFade.value = smoothstep(0, 0.05, p) * 0.95;
-      for (let i = 0; i < glints.length; i++) {
-        const gl = glints[i];
-        const tw = 0.7 + 0.3 * Math.sin(time * 1.1 + gl.phase);
-        gl.mat.opacity = smoothstep(0, 0.06, p) * 0.85 * tw;
-        gl.sp.scale.setScalar(gl.base * (0.88 + tw * 0.2));
-      }
-      coreGlow.material.opacity = 0.22 + smoothstep(0.35, 1, p) * 0.3;
-
-      // --- Flight ---------------------------------------------------
-      const a = camAngle(p);
-      const r = camRadius(p) * fit;
-      camera.position.set(
-        Math.cos(a) * r + state.camX,
-        camHeight(p) * fit + state.camY,
-        Math.sin(a) * r
-      );
-      // Look down its own path, inward — not at the core. aimK pulls that
-      // aim back toward the core as the viewport narrows (see reframe).
-      const la = camAngle(p + LOOK_AHEAD * aimK);
-      const lr = camRadius(p + LOOK_AHEAD * aimK) * fit * 0.45 * aimK;
-      target.set(
-        Math.cos(la) * lr,
-        camHeight(p + LOOK_AHEAD * aimK) * fit * 0.3 * aimK,
-        Math.sin(la) * lr
-      );
-      camera.lookAt(target);
-      // Bank into the turn. Small in absolute terms, but rolling the horizon
-      // is most of what separates "flown" from "dollied".
-      camera.rotation.z += Math.sin(p * Math.PI) * 0.38 * rollK;
-
-      state.camX += (state.px * 0.9 - state.camX) * Math.min(1, dt * 3);
-      state.camY += (-state.py * 0.6 - state.camY) * Math.min(1, dt * 3);
-
-      // --- Roles ----------------------------------------------------
-      let nearest = -1;
-      let nearestK = 0;
-      for (let i = 0; i < markers.length; i++) {
-        const m = markers[i];
-        // Triangular window around this role's point on the flight.
-        const k = 1 - smoothstep(0, 0.13, Math.abs(p - m.p));
-        const pulse = 0.85 + 0.15 * Math.sin(time * 2 + i);
-        m.mat.opacity = 0.25 + k * 0.75;
-        m.sprite.scale.setScalar((0.28 + k * 0.95) * pulse);
-        if (k > nearestK) { nearestK = k; nearest = i; }
-      }
-
-      // Panels are written straight to the DOM rather than through state —
-      // a setState here would re-render the section on every frame of the
-      // flight, for text that is usually unchanged.
-      for (let i = 0; i < panelRefs.current.length; i++) {
-        const el = panelRefs.current[i];
-        if (!el) continue;
-        const k = 1 - smoothstep(0, 0.115, Math.abs(p - nodeProgress(i)));
-        el.style.opacity = String(k);
-        el.style.transform = `translate3d(0, ${(1 - k) * 22}px, 0)`;
-        el.style.visibility = k > 0.01 ? "visible" : "hidden";
-        const dot = dotRefs.current[i];
-        if (dot) {
-          dot.style.opacity = String(0.25 + k * 0.75);
-          dot.style.transform = `scale(${1 + k * 0.9})`;
-        }
-      }
-
-      // The hint has made its point by the time the first role arrives, and
-      // on a narrow screen it wraps into the panel underneath it.
-      if (hintRef.current) {
-        hintRef.current.style.opacity = String(1 - smoothstep(0.04, 0.12, p));
-      }
-
-      if (nearest !== state.active) {
-        state.active = nearest;
-        if (counterRef.current) {
-          counterRef.current.textContent =
-            nearest >= 0
-              ? `${EXPERIENCE[nearest].id} / ${String(EXPERIENCE.length).padStart(2, "0")}`
-              : "";
-        }
-      }
 
       // Fades in over Projects, and deliberately never fades out — About
-      // sits above this one and covers it, and crossfading two identical
-      // black backgrounds is what makes the handoff invisible.
+      // sits above this one and covers it.
+      const fade = entryRef.current;
       if (stackRef.current) {
-        const o = entryRef.current;
-        stackRef.current.style.opacity = o;
-        stackRef.current.style.pointerEvents = o > 0.01 ? "auto" : "none";
+        stackRef.current.style.opacity = fade;
+        stackRef.current.style.pointerEvents = fade > 0.01 ? "auto" : "none";
+      }
+      if (!width || !words.length) return;
+
+      const dt = previous ? Math.min((now - previous) / 1000, 1 / 20) : 0;
+      previous = now;
+      clock += dt;
+
+      // Smooth the scroll itself, then derive everything from it — the line
+      // and the camera stay locked together however fast you scroll.
+      const target = progressRef.current;
+      p = p === null || reduced ? target : p + (target - p) * (1 - Math.exp(-SMOOTHING * dt));
+      if (Math.abs(target - p) < 1e-5) p = target;
+      const raw = toRaw(p);
+      const slot = toSlot(raw);
+
+      let i = Math.floor(slot);
+      let f = slot - i;
+      if (i >= COUNT - 1) {
+        i = COUNT - 1;
+        f = 0;
       }
 
-      renderer.render(scene, camera);
+      // --- where everyone is -----------------------------------------------
+      // The camera flies straight down the corridor, keeping pace with the
+      // runner in depth, while he zig-zags across it from one company to the
+      // next.
+      const cx = width / 2;
+      const NEAR = F * 0.12;
+      // 0 until the last hold ends, then 0 -> 1 on the way out.
+      const u = clamp((raw - OUT_AT) / OUTRO, 0, 1);
+      // Eases in from the stop, and is still gliding at the end rather than
+      // braking to a halt — About's camera takes over from a moving one.
+      const travel = OUT_DEPTH * F * u * u * (2 - u);
+      // The line of flight swings to where About's globe will sit.
+      const settle = smoothstep(0, 0.6, u);
+      const cy =
+        height * (narrow ? 0.36 : 0.4) +
+        (height * (0.5 + ABOUT_DROP * Math.min(1, width / height)) - height * (narrow ? 0.36 : 0.4)) * settle;
+
+      const follow = narrow ? CAM_FOLLOW_NARROW : CAM_FOLLOW;
+      // Vertically: half-way on a desktop, all the way up the climb on a phone.
+      const followY = narrow ? 1 : 0.5;
+      let run;
+      let cam;
+      let runT = 0;
+      if (i < 0) {
+        // Opening: fly in down the corridor toward the first name. No runner
+        // yet.
+        const t = slot + 1; // already eased, in toSlot
+        run = anchors[0];
+        const c = centres[0];
+        const pre = (1 - entryRef.current) * PRE_ROLL * F;
+        cam = [c[0] * follow * t, c[1] * followY * t, c[2] - F - (1 - t) * APPROACH * F - pre];
+      } else {
+        const next = Math.min(i + 1, COUNT - 1);
+        runT = easeInOut(f);
+        run = lerp3(anchors[i], anchors[next], runT);
+        const c = lerp3(centres[i], centres[next], runT);
+        cam = [c[0] * follow, c[1] * followY, c[2] - F];
+      }
+
+      // The way out: to the middle of the corridor, then straight on.
+      if (u > 0) {
+        cam = [cam[0] * (1 - settle), cam[1], cam[2] + travel];
+      }
+
+      const swayK = reduced ? 0 : 1 - Math.exp(-3 * dt);
+      const nx = present ? pointerX / width - 0.5 : 0;
+      const ny = present ? pointerY / height - 0.5 : 0;
+      swayX += (nx * PARALLAX * width - swayX) * swayK;
+      swayY += (ny * PARALLAX * height - swayY) * swayK;
+      // The pointer sway eases out on the way out, so nothing drifts off the
+      // line of flight.
+      const steady = 1 - settle;
+      cam[0] += swayX * steady;
+      cam[1] += swayY * steady;
+
+      // --- HUD --------------------------------------------------------------
+      const near = clamp(Math.round(slot), 0, COUNT - 1);
+      setActive((prev) => (prev === near ? prev : near));
+      if (hudRef.current) {
+        // Away while he's running, back as he arrives.
+        const between = Math.min(f, 1 - f);
+        const shown = slot < -0.3 ? 0 : (1 - smoothstep(0.03, 0.16, between)) * (1 - smoothstep(0, 0.1, u));
+        hudRef.current.style.opacity = String(shown);
+        hudRef.current.style.transform = `translate3d(0, ${(1 - shown) * 10}px, 0)`;
+        // Sits under the company it describes, on that company's side of the
+        // corridor. On a phone there's only room for the middle.
+        let hx = width / 2;
+        if (!narrow) {
+          const half = Math.min(260, (width - 32) / 2);
+          hx = clamp(width / 2 + centres[near][0] * (1 - follow), half + 16, width - half - 16);
+        }
+        hudRef.current.style.left = `${hx}px`;
+      }
+      if (markerRef.current) {
+        const t = COUNT > 1 ? clamp(slot, 0, COUNT - 1) / (COUNT - 1) : 0;
+        markerRef.current.style.left = `${t * 100}%`;
+      }
+      // The section's chrome clears out of the way on the way out, so what
+      // About fades in over is just space.
+      const chrome = String(1 - smoothstep(0.15, 0.6, u));
+      if (topRef.current) topRef.current.style.opacity = chrome;
+      if (timelineRef.current) timelineRef.current.style.opacity = chrome;
+
+      // --- words ------------------------------------------------------------
+      lens += (present - lens) * (reduced ? 1 : 1 - Math.exp(-8 * dt));
+      const tq = reduced ? 0 : Math.floor(clock * SHIMMER_FPS) / SHIMMER_FPS;
+      const hotX = reduced ? 0 : Math.sin(clock * 0.33) * 0.55;
+      const hotY = reduced ? 0 : Math.cos(clock * 0.21) * 0.35;
+      const size = block * (1 - GAP_RATIO);
+
+      for (const b of buckets) b.length = 0;
+      dots.length = 0;
+      specks.length = 0;
+
+      for (let w = 0; w < COUNT; w++) {
+        const word = words[w];
+        const [wx, wy, wz] = centres[w];
+        const dz = wz - cam[2];
+        if (dz < NEAR) continue;
+        const s = F / dz;
+        const ox = cx + (wx - cam[0]) * s;
+        const oy = cy + (wy - cam[1]) * s;
+        // The name's own scale on top of perspective: full size at the one
+        // you're at (or heading into), smaller for the rest on a phone.
+        const focus = 1 - clamp(Math.abs(w - Math.max(slot, 0)), 0, 1);
+        const sw = s * (narrow ? DISTANT_SCALE_NARROW + (1 - DISTANT_SCALE_NARROW) * focus : 1);
+        // Off screen entirely.
+        if (ox + word.halfW * sw < 0 || ox - word.halfW * sw > width) continue;
+        if (oy + word.halfH * sw < 0 || oy - word.halfH * sw > height) continue;
+        if (s > 6) continue;
+
+        // Only the next few are really there; the ones after them are still
+        // out in the dark, and condense out of it block by block as you get
+        // closer.
+        const fog = 1 - smoothstep(FOG[0] * F, FOG[1] * F, dz);
+        if (fog <= 0) continue;
+        // Distant names read cooler and dimmer — the same palette, further
+        // down the ramp.
+        const cool = clamp((dz / F - 1) * 0.16, 0, 0.55);
+        let px = size * sw * dpr;
+        // Far off, a name is a few pixels wide; drawing all its blocks at
+        // sub-pixel size is wasted work. Thin them out instead, so it reads
+        // as a cluster of stars.
+        // And close up, as the camera flies past a name, it dissolves out of
+        // the way rather than filling the screen with blocks.
+        const keep = (px < 1.4 ? px / 1.4 : 1) * fog * (1 - smoothstep(1.8, 3.2, s));
+        if (keep <= 0) continue;
+        px = Math.max(1, Math.round(px));
+        const salt = w * 97.3;
+
+        for (let k = 0; k < word.n; k++) {
+          if (keep < 1 && hash(k, salt) > keep) continue;
+          const bx = word.xy[k * 2];
+          const by = word.xy[k * 2 + 1];
+          let sx = ox + bx * sw;
+          let sy = oy + by * sw;
+
+          let grow = 1;
+          let boost = 0;
+          if (lens > 0.01) {
+            const ddx = sx - pointerX;
+            const ddy = sy - pointerY;
+            const d = Math.hypot(ddx, ddy) || 1;
+            const L = Math.exp(-(d * d) / (LENS_RADIUS * LENS_RADIUS)) * lens * Math.min(1, s);
+            if (L > 0.01) {
+              grow += L * LENS_GROW;
+              boost = L * 0.35;
+              sx += (ddx / d) * L * block * 1.6 * s;
+              sy += (ddy / d) * L * block * 1.6 * s;
+            }
+          }
+
+          const u = bx / word.halfW - hotX;
+          const v = (by / word.halfH - hotY) * 0.6;
+          let heat = 1.02 - Math.hypot(u, v) * 0.62 - cool + boost;
+          heat += (hash(k, 3 + w) - 0.5) * DITHER;
+          heat += Math.sin(tq * 1.4 + hash(k, 2 + w) * Math.PI * 2) * SHIMMER;
+          const idx = clamp(Math.floor((1 - heat) * PALETTE.length), 0, PALETTE.length - 1);
+          const q = grow === 1 ? px : Math.round(px * grow);
+          buckets[idx].push(Math.round(sx * dpr - q / 2), Math.round(sy * dpr - q / 2), q, q);
+        }
+      }
+
+      // --- the line ---------------------------------------------------------
+      // Each leg draws itself out from the name you're at toward the next,
+      // starting while you're still standing there, and finishing just after
+      // the runner sets off — so he's always running onto line that's there.
+      for (let l = 0; l < COUNT - 1; l++) {
+        const reveal = reduced
+          ? (raw >= l + H ? 1 : 0)
+          : smoothstep(l, l + H + 0.15, raw);
+        if (reveal <= 0) continue;
+        const a = anchors[l];
+        const b = anchors[l + 1];
+        const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+        const steps = Math.ceil((len * reveal) / (block * DOT_SPACING));
+        for (let d = 0; d <= steps; d++) {
+          const t = Math.min(reveal, (d * block * DOT_SPACING) / len);
+          const dz = a[2] + (b[2] - a[2]) * t - cam[2];
+          if (dz < NEAR) continue;
+          const s = F / dz;
+          // The stretch already run, rushing past the lens, would otherwise
+          // blow up into a trail of huge squares.
+          // Thinned out on the way there, so it dissolves instead of ending in
+          // a stub.
+          if (s > 2.2 || (s > 1.5 && hash(d, l + 11) < (s - 1.5) / 0.7)) continue;
+          const sx = cx + (a[0] + (b[0] - a[0]) * t - cam[0]) * s;
+          const sy = cy + (a[1] + (b[1] - a[1]) * t - cam[1]) * s;
+          if (sx < -20 || sx > width + 20 || sy < -20 || sy > height + 20) continue;
+          const q = Math.max(1, Math.round(block * 0.6 * s * dpr));
+          dots.push(Math.round(sx * dpr - q / 2), Math.round(sy * dpr - q / 2), q, q);
+        }
+      }
+
+      // --- dust -------------------------------------------------------------
+      for (let k = 0; k < DUST_COUNT; k++) {
+        const dz = dust[k * 4 + 2] - cam[2];
+        if (dz < NEAR) continue;
+        const s = F / dz;
+        const sx = cx + (dust[k * 4] - cam[0]) * s;
+        const sy = cy + (dust[k * 4 + 1] - cam[1]) * s;
+        if (sx < 0 || sx > width || sy < 0 || sy > height) continue;
+        const q = Math.max(1, Math.round((1 + dust[k * 4 + 3] * 2.5) * Math.min(s, 2.5) * dpr));
+        specks.push(Math.round(sx * dpr), Math.round(sy * dpr), q, q);
+      }
+
+      // --- paint ------------------------------------------------------------
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const fillRects = (rects, style, alpha) => {
+        if (!rects.length) return;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = style;
+        ctx.beginPath();
+        for (let r = 0; r < rects.length; r += 4) ctx.rect(rects[r], rects[r + 1], rects[r + 2], rects[r + 3]);
+        ctx.fill();
+      };
+      fillRects(specks, PALETTE[4], 0.45);
+      fillRects(dots, INK, 0.55);
+      // Coolest first, so the hot core lands on top.
+      for (let c = PALETTE.length - 1; c >= 0; c--) fillRects(buckets[c], PALETTE[c], 1);
+      ctx.globalAlpha = 1;
+
+      // --- runner -----------------------------------------------------------
+      const el = runnerRef.current;
+      if (el) {
+        const moving = f > 0.002 && f < 0.998 && i >= 0 && i < COUNT - 1;
+        const arrived = i >= COUNT - 1 && slot >= COUNT - 1 - 1e-3;
+        const mode = LEGS[Math.max(i, 0) % LEGS.length];
+        const airborne = moving && mode === "fly";
+
+        // The flight leaves the line and arcs over it, touching back down at
+        // the next company.
+        const x = run[0];
+        let y = run[1];
+        const z = run[2];
+        if (airborne && !reduced) {
+          y -= Math.sin(Math.PI * runT) * runH * LIFT;
+          y += Math.sin(clock * 5) * runH * 0.05;
+        }
+        const dz = z - cam[2];
+        const visible = smoothstep(-0.4, -0.08, slot);
+        if (dz < NEAR || visible <= 0) {
+          el.style.opacity = "0";
+        } else {
+          const s = F / dz;
+          const sx = cx + (x - cam[0]) * s;
+          const sy = cy + (y - cam[1]) * s;
+          // In the air he's drawn lying flat, so the pose only fills a strip
+          // of its box; drawn bigger to read at the same weight.
+          const h = runH * s * (airborne ? 1.35 : 1);
+          // 48 x 32 box, centred on x, ground (y 29.4) on the line.
+          el.style.opacity = String(visible);
+          el.style.height = `${h}px`;
+          el.style.transform = `translate3d(${sx - h * 0.75}px, ${sy - h * (29.4 / 32)}px, 0)`;
+
+          let next = STAND;
+          // At the last company he stays — arms up, as the camera carries on
+          // past him.
+          if (arrived) next = CHEER;
+          else if (moving) {
+            const frame = STRIDES[mode]
+              ? Math.floor((i + runT) * STRIDES[mode]) % 2
+              : reduced ? 0 : Math.floor(clock * FLUTTER[mode]) % 2;
+            next = poseAt(mode, frame);
+          }
+          if (next !== pose) {
+            // A new vehicle (or getting off one) pops in; a new frame of the
+            // same one just swaps.
+            const swapped = pose < 0 || POSES[pose].name !== POSES[next].name;
+            poseRefs.current.forEach((node, n) => {
+              if (node) node.style.opacity = n === next ? "1" : "0";
+            });
+            const node = poseRefs.current[next];
+            if (swapped && node && !reduced && pose >= 0) {
+              node.animate(
+                [
+                  { transform: "scale(0.3)", opacity: 0 },
+                  { transform: "scale(1.12)", opacity: 1, offset: 0.7 },
+                  { transform: "scale(1)", opacity: 1 },
+                ],
+                { duration: 320, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" }
+              );
+            }
+            pose = next;
+          }
+
+          // Faces the way this leg of the zig-zag goes — or, standing at a
+          // company, the way the next one does.
+          const leg = clamp(i, 0, COUNT - 2);
+          const dir = Math.sign(centres[leg + 1][0] - centres[leg][0]) || 1;
+          if (dir !== facing && flipRef.current) {
+            facing = dir;
+            flipRef.current.setAttribute("transform", dir < 0 ? "translate(48 0) scale(-1 1)" : "");
+          }
+        }
+      }
     };
     tickRef.current = tick;
     if (activeRef.current && rafIdRef.current == null) {
@@ -728,21 +783,14 @@ export default function Experience() {
       if (rafIdRef.current != null) cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
       tickRef.current = null;
-      window.removeEventListener("resize", onResize);
-      mount.removeEventListener("pointermove", onPointerMove);
-      mount.removeEventListener("pointerleave", onPointerLeave);
-      renderer.dispose();
-      if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
-      galaxyGeo.dispose();
-      galaxyMat.dispose();
-      glints.forEach((g) => g.mat.dispose());
-      glintTex.dispose();
-      markers.forEach((m) => m.mat.dispose());
-      coreGlow.material.dispose();
-      glowTex.dispose();
+      observer.disconnect();
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerleave", onLeave);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everActive]);
+
+  const item = EXPERIENCE[active];
 
   return (
     // -100vh for the same reason as Projects: a pinned section's progress
@@ -750,122 +798,74 @@ export default function Experience() {
     // a viewport-tall gap where neither section is on screen.
     <section
       ref={sectionRef}
+      aria-label="Experience"
       style={{ position: "relative", height: `${SCROLL_LENGTH_VH}vh`, marginTop: "-100vh" }}
     >
-      <div ref={stackRef} className="space-ground" style={styles.stack}>
-        <div ref={mountRef} style={styles.canvasMount} />
+      <div ref={stackRef} className="space-ground xp-stack">
+        <canvas ref={canvasRef} className="xp-canvas" aria-hidden="true" />
 
-        <div style={styles.topBar}>
-          <span style={styles.eyebrow}>EXPERIENCE</span>
-          <span ref={counterRef} style={styles.counter} />
+        {/* The runner from About, with the same hand-drawn line boil — and
+            the bike, board and cape he picks up along the way. */}
+        <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden="true">
+          <filter id="xp-boil">
+            <feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="2" seed="1">
+              <animate attributeName="seed" values="1;4;7;2" dur="0.5s" calcMode="discrete" repeatCount="indefinite" />
+            </feTurbulence>
+            <feDisplacementMap in="SourceGraphic" scale="1.1" />
+          </filter>
+        </svg>
+        <svg ref={runnerRef} className="xp-runner" viewBox="0 0 48 32" aria-hidden="true">
+          <g filter="url(#xp-boil)">
+            <g ref={flipRef}>
+              {POSES.map((q, n) => (
+                <g
+                  key={`${q.name}-${q.frame}`}
+                  ref={(node) => { poseRefs.current[n] = node; }}
+                  className="xp-pose"
+                  style={{ opacity: n === STAND ? 1 : 0 }}
+                >
+                  {q.parts.map((part, j) => (
+                    <path key={j} d={part.d} className={`xp-part-${part.kind}`} />
+                  ))}
+                </g>
+              ))}
+            </g>
+          </g>
+        </svg>
+
+        <div ref={topRef} className="xp-top">
+          <span style={{ color: ACCENT }}>EXPERIENCE</span>
+          <span className="xp-counter">
+            {item.id} / {String(COUNT).padStart(2, "0")}
+          </span>
         </div>
 
-        {/* One panel per role, all mounted, all but the active one hidden.
-            Mounting them up front keeps the flight free of layout work. */}
-        <div style={styles.panelWrap}>
-          {EXPERIENCE.map((item, i) => (
-            <article
-              key={item.id}
-              ref={(el) => { panelRefs.current[i] = el; }}
-              style={styles.panel}
-            >
-              <div style={styles.period}>{item.period}</div>
-              <div style={styles.companyRow}>
-                {LOGOS[item.logo] ? (
-                  <img src={LOGOS[item.logo]} alt="" style={styles.logo} />
-                ) : (
-                  <span style={{ ...styles.monogram, background: item.color }}>
-                    {item.company[0]}
-                  </span>
-                )}
-                <h3 style={styles.company}>{item.company}</h3>
-              </div>
-              <div style={{ ...styles.role, color: item.color }}>{item.role}</div>
-              <p style={styles.blurb}>{item.blurb}</p>
-            </article>
-          ))}
+        {/* The canvas spells the company; everything else is real text. */}
+        <div ref={hudRef} className="xp-hud" aria-live="polite">
+          <h3 className="xp-sr-only">{item.company}</h3>
+          <div className="xp-meta">
+            <Decode text={item.role.toUpperCase()} style={{ color: ACCENT }} />
+            <span className="xp-dot" />
+            <Decode text={item.period} className="xp-period" />
+          </div>
+          <p className="xp-blurb" key={item.id}>{item.blurb}</p>
         </div>
 
-        <div style={styles.rail}>
-          {EXPERIENCE.map((item, i) => (
-            <span
-              key={item.id}
-              ref={(el) => { dotRefs.current[i] = el; }}
-              style={{ ...styles.railDot, background: item.color }}
-            />
-          ))}
+        <div ref={timelineRef} className="xp-timeline" aria-hidden="true">
+          <div className="xp-track">
+            <span ref={markerRef} className="xp-marker" style={{ background: ACCENT }} />
+            {EXPERIENCE.map((entry, i) => (
+              <span
+                key={entry.id}
+                className={`xp-tick${i === active ? " is-active" : ""}`}
+                style={{ left: `${COUNT > 1 ? (i / (COUNT - 1)) * 100 : 0}%` }}
+              >
+                {tickLabel(entry.period)}
+              </span>
+            ))}
+          </div>
         </div>
-
-        <div ref={hintRef} style={styles.hint}>SCROLL TO FALL INTO THE CORE</div>
       </div>
     </section>
   );
 }
-
-const mono = "'Courier New', monospace";
-
-const styles = {
-  stack: {
-    position: "fixed",
-    inset: 0,
-    zIndex: 6, // above Projects (5) — fades in over its neighbour
-    overflow: "hidden",
-    fontFamily: mono,
-    color: "#fff",
-    userSelect: "none",
-    opacity: 0,
-    pointerEvents: "none",
-  },
-  // pan-y, never none — see Projects.jsx: `none` on a full-viewport overlay
-  // kills touch scrolling for the whole section.
-  canvasMount: { position: "absolute", inset: 0, touchAction: "pan-y" },
-  topBar: {
-    position: "absolute", top: 0, left: 0, right: 0, display: "flex",
-    alignItems: "center", justifyContent: "space-between", padding: "22px 32px",
-    fontSize: 11, letterSpacing: 2, color: "rgba(255,255,255,0.75)",
-  },
-  eyebrow: { color: ACCENT },
-  counter: { color: "rgba(255,255,255,0.55)" },
-  // Every panel occupies the same box; only one is visible at a time.
-  panelWrap: {
-    position: "absolute", left: 0, bottom: 0, width: "min(430px, 86vw)",
-    height: "min(340px, 46vh)", margin: "0 0 68px 32px", pointerEvents: "none",
-  },
-  panel: {
-    position: "absolute", left: 0, bottom: 0, width: "100%",
-    opacity: 0, visibility: "hidden", willChange: "opacity, transform",
-  },
-  period: {
-    fontSize: 11, letterSpacing: 2, color: "rgba(255,255,255,0.5)", marginBottom: 14,
-  },
-  companyRow: { display: "flex", alignItems: "center", gap: 12, marginBottom: 6 },
-  logo: { height: 26, width: "auto", display: "block" },
-  monogram: {
-    width: 26, height: 26, borderRadius: "50%", display: "grid",
-    placeItems: "center", color: "#0a0a0d", fontWeight: 700,
-    fontFamily: "Helvetica, Arial, sans-serif", fontSize: 14,
-  },
-  company: {
-    margin: 0, fontFamily: "Helvetica, Arial, sans-serif", fontWeight: 600,
-    fontSize: "clamp(21px, 2.4vw, 30px)", color: "#fff",
-    textShadow: "0 2px 22px rgba(0,0,0,0.8)",
-  },
-  role: { fontSize: 12.5, letterSpacing: 1, marginBottom: 12 },
-  blurb: {
-    margin: 0, fontSize: 12.5, lineHeight: 1.75,
-    color: "rgba(255,255,255,0.62)", textShadow: "0 1px 16px rgba(0,0,0,0.85)",
-  },
-  rail: {
-    position: "absolute", right: 30, top: "50%", transform: "translateY(-50%)",
-    display: "flex", flexDirection: "column", gap: 14,
-  },
-  railDot: {
-    width: 5, height: 5, borderRadius: "50%", display: "block",
-    opacity: 0.25, transition: "none",
-  },
-  hint: {
-    position: "absolute", bottom: 24, left: "50%", transform: "translateX(-50%)",
-    fontSize: 10, letterSpacing: 2, color: "rgba(255,255,255,0.4)",
-    whiteSpace: "nowrap", // it wrapped into the role panel on narrow screens
-  },
-};

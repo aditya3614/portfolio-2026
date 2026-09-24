@@ -29,6 +29,17 @@ const CARD_H = 212;
 const SPACING = 640;
 const START_Z = 520;
 
+// A phone viewport is both narrower and much taller than a desktop one, so
+// the same 55deg vertical FOV shows roughly a quarter of the horizontal
+// world width. At full size the cards — and especially their sideways
+// scatter — run off both edges long before they're close enough to read.
+// Shrinking the card and pulling the scatter toward the centre keeps the
+// whole card inside the frame through the readable part of its approach,
+// without touching the flight path itself.
+const NARROW_QUERY = "(max-width: 700px)";
+const NARROW_CARD_SCALE = 0.58;
+const NARROW_JITTER_SCALE = 0.42;
+
 // Scroll distance the whole flight plays out over. ~70vh per card gives
 // enough room to read each one without dragging.
 const SCROLL_LENGTH_VH = PROJECTS.length * 70;
@@ -47,6 +58,19 @@ export default function Projects() {
   const hoverLinkRef = useRef(null);
 
   const { progressRef, entryRef } = useScrollProgressRef(sectionRef);
+
+  // Breakpoint lives in state (not a ref) because the scene is built once:
+  // crossing it rebuilds the cards at the other size. That's rare enough —
+  // an orientation change or a desktop window drag — to be worth the rebuild.
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(NARROW_QUERY).matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const onChange = (e) => setNarrow(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   const [hoveredTitle, setHoveredTitle] = useState(null);
   const [hoveredSlug, setHoveredSlug] = useState(null);
@@ -126,6 +150,13 @@ export default function Projects() {
     const mount = mountRef.current;
     let width = mount.clientWidth;
     let height = mount.clientHeight;
+
+    // Card size is baked into the geometry rather than mesh.scale, because
+    // the render loop rewrites mesh.scale every frame for the hover pulse.
+    const cardScale = narrow ? NARROW_CARD_SCALE : 1;
+    const jitterScale = narrow ? NARROW_JITTER_SCALE : 1;
+    const cardW = CARD_W * cardScale;
+    const cardH = CARD_H * cardScale;
 
     // -------------------------------------------------------------
     // Scene / camera / renderer
@@ -299,14 +330,14 @@ export default function Projects() {
     };
 
     PROJECTS.forEach((project, i) => {
-      const geo = new THREE.PlaneGeometry(CARD_W, CARD_H);
+      const geo = new THREE.PlaneGeometry(cardW, cardH);
       const tex = makeCardTexture(project);
       const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geo, mat);
 
       const side = i % 2 === 0 ? 1 : -1;
-      const jitterX = side * (90 + rand(i + 1) * 190);
-      const jitterY = (rand(i + 7) - 0.5) * 220;
+      const jitterX = side * (90 + rand(i + 1) * 190) * jitterScale;
+      const jitterY = (rand(i + 7) - 0.5) * 220 * jitterScale;
       mesh.position.set(jitterX, jitterY, -i * SPACING - 200);
       mesh.rotation.set(
         (rand(i + 3) - 0.5) * 0.16,
@@ -325,8 +356,11 @@ export default function Projects() {
       petTex.magFilter = THREE.NearestFilter;
       petTex.minFilter = THREE.NearestFilter;
       const petMat = new THREE.MeshBasicMaterial({ map: petTex, transparent: true });
-      const petMesh = new THREE.Mesh(new THREE.PlaneGeometry(120, 90), petMat);
-      petMesh.position.set(0, 38, 0.5);
+      const petMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(120 * cardScale, 90 * cardScale),
+        petMat
+      );
+      petMesh.position.set(0, 38 * cardScale, 0.5);
       mesh.add(petMesh);
       mesh.userData.pet = { species, frame: 0, ctx: petCtx, tex: petTex, w: petCanvas.width, h: petCanvas.height, mat: petMat, geo: petMesh.geometry };
 
@@ -450,7 +484,7 @@ export default function Projects() {
       // outline emulation: tint hovered card border via a thin red frame overlay
       cardMeshes.forEach((m) => {
         if (!m.userData.frame) {
-          const frameGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(CARD_W + 4, CARD_H + 4));
+          const frameGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(cardW + 4, cardH + 4));
           const frameMat = new THREE.LineBasicMaterial({ color: ACCENT, transparent: true, opacity: 0 });
           const frame = new THREE.LineSegments(frameGeo, frameMat);
           m.add(frame);
@@ -530,7 +564,7 @@ export default function Projects() {
       if (audioRef.current.ctx) audioRef.current.ctx.close?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [everActive]);
+  }, [everActive, narrow]);
 
   return (
     // The -100vh margin is load-bearing, not cosmetic. A pinned section's
@@ -549,24 +583,33 @@ export default function Projects() {
       <div ref={stackRef} className="space-ground" style={styles.stack}>
         <div ref={mountRef} style={styles.canvasMount} />
 
-        {/* bottom bar */}
-        <div style={styles.bottomBar}>
-          <div ref={hoverLinkRef} style={styles.hoverLink}>
-            {hoveredTitle ? `/work/${hoveredSlug}` : ""}
-          </div>
+        {/* bottom bar — on a phone the three groups can't sit side by side
+            without wrapping into the scene, so the telemetry readouts drop
+            out and only the essentials (project count, sound, progress)
+            stay. */}
+        <div style={{ ...styles.bottomBar, ...(narrow ? styles.bottomBarNarrow : null) }}>
+          {!narrow && (
+            <div ref={hoverLinkRef} style={styles.hoverLink}>
+              {hoveredTitle ? `/work/${hoveredSlug}` : ""}
+            </div>
+          )}
           <div style={styles.bottomCenter}>
-            <span>VEL <b ref={hudRefs.vel} style={styles.hudNum}>0.00</b></span>
-            <span style={styles.dot}>·</span>
-            <span>Z <b ref={hudRefs.z} style={styles.hudNum}>0</b></span>
-            <span style={styles.dot}>·</span>
+            {!narrow && (
+              <>
+                <span>VEL <b ref={hudRefs.vel} style={styles.hudNum}>0.00</b></span>
+                <span style={styles.dot}>·</span>
+                <span>Z <b ref={hudRefs.z} style={styles.hudNum}>0</b></span>
+                <span style={styles.dot}>·</span>
+              </>
+            )}
             <span>{PROJECTS.length} PROJECTS — SCROLL TO FLY</span>
           </div>
-          <div style={styles.bottomRight}>
+          <div style={{ ...styles.bottomRight, ...(narrow ? styles.bottomRightNarrow : null) }}>
             <span onClick={toggleSound} style={styles.sndToggle}>
               SND [{soundOn ? "ON" : "OFF"}]
             </span>
             <span style={styles.scrlWrap}>
-              <span style={styles.scrlBarTrack}>
+              <span style={{ ...styles.scrlBarTrack, ...(narrow ? styles.scrlBarTrackNarrow : null) }}>
                 <span ref={hudRefs.scrlBar} style={styles.scrlBarFill} />
               </span>
               SCRL <b ref={hudRefs.scrl} style={styles.hudNum}>000%</b>
@@ -613,13 +656,16 @@ const styles = {
     justifyContent: "space-between", padding: "16px 24px", fontSize: 11, letterSpacing: 0.5,
     borderTop: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.7)",
   },
+  bottomBarNarrow: { padding: "10px 12px", fontSize: 9, gap: 10 },
   hoverLink: { minWidth: 160, color: ACCENT, fontSize: 11 },
   bottomCenter: { display: "flex", alignItems: "center", gap: 10 },
   dot: { opacity: 0.3 },
   hudNum: { color: "#fff", fontWeight: 700 },
   bottomRight: { display: "flex", alignItems: "center", gap: 18 },
+  bottomRightNarrow: { gap: 10 },
   sndToggle: { cursor: "pointer", color: "rgba(255,255,255,0.7)" },
   scrlWrap: { display: "flex", alignItems: "center", gap: 8 },
   scrlBarTrack: { width: 60, height: 4, background: "rgba(255,255,255,0.15)", position: "relative", overflow: "hidden" },
+  scrlBarTrackNarrow: { width: 34 },
   scrlBarFill: { position: "absolute", left: 0, top: 0, bottom: 0, width: "0%", background: ACCENT },
 };
