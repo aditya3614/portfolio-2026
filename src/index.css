@@ -6,7 +6,7 @@
 }
 
 :root {
-  --ground: #0b0705;
+  --ground: #000000;
 }
 
 /* Dark all the way down: sections crossfade over each other while scrolling,
@@ -21,14 +21,12 @@ body {
   font-family: Arial, sans-serif;
 }
 
-/* The one shared backdrop every section sits on — warm black with a faint
-   grid. Identical layers crossfading over each other are invisible, which is
-   what makes the section handoffs seamless. */
+/* The one shared backdrop every section sits on — plain pitch black, the
+   same void the hero's glass ring hangs in. Identical layers crossfading
+   over each other are invisible, which is what makes the section handoffs
+   seamless. */
 .space-ground {
   background-color: var(--ground);
-  background-image:
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 44px),
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 44px);
 }
 
 .page {

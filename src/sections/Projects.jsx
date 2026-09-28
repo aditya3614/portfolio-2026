@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as THREE from "three";
 import { PROJECTS, ACCENT } from "../data/projects";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
 import { GROUND } from "../theme";
+import { PREVIEWS } from "../components/previews";
 
 /**
  * SPACE FLIGHT GALLERY
@@ -29,6 +30,15 @@ const CARD_H = 212;
 const SPACING = 640;
 const START_Z = 520;
 
+// Project previews (components/previews): the canvas resolution behind each
+// one, and how far ahead of the camera a card can be and still be worth
+// repainting — by ~2200 units the fog has swallowed nearly all of it.
+const PREVIEW_TEX = 512;
+const PREVIEW_RANGE = 2200;
+// The card's top share that holds the picture; the title, tag and link sit
+// in the band below it. Full-bleed previews fill exactly this area.
+const IMAGE_FRACTION = 0.6;
+
 // A phone viewport is both narrower and much taller than a desktop one, so
 // the same 55deg vertical FOV shows roughly a quarter of the horizontal
 // world width. At full size the cards — and especially their sideways
@@ -49,13 +59,6 @@ export default function Projects() {
   const sectionRef = useRef(null);
   const stackRef = useRef(null);
   const mountRef = useRef(null);
-  const hudRefs = {
-    vel: useRef(null),
-    z: useRef(null),
-    scrl: useRef(null),
-    scrlBar: useRef(null),
-  };
-  const hoverLinkRef = useRef(null);
 
   const { progressRef, entryRef } = useScrollProgressRef(sectionRef);
 
@@ -72,43 +75,7 @@ export default function Projects() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  const [hoveredTitle, setHoveredTitle] = useState(null);
-  const [hoveredSlug, setHoveredSlug] = useState(null);
-  const [soundOn, setSoundOn] = useState(false);
   const [ready, setReady] = useState(false);
-
-  // audio (procedural, no external asset)
-  const audioRef = useRef({ ctx: null, gain: null, osc: null });
-  const soundOnRef = useRef(soundOn);
-  useEffect(() => { soundOnRef.current = soundOn; }, [soundOn]);
-
-  const toggleSound = useCallback(() => {
-    setSoundOn((prev) => {
-      const next = !prev;
-      const a = audioRef.current;
-      if (next && !a.ctx) {
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = 60;
-          gain.gain.value = 0;
-          osc.connect(gain).connect(ctx.destination);
-          osc.start();
-          audioRef.current = { ctx, gain, osc };
-        } catch (e) {
-          // audio unsupported — HUD toggle still works visually
-        }
-      } else if (a.ctx) {
-        a.ctx.resume?.();
-      }
-      if (!next && audioRef.current.gain) {
-        audioRef.current.gain.gain.value = 0;
-      }
-      return next;
-    });
-  }, []);
 
   // Whether the render loop should be running at all right now. Building
   // the scene (WebGL renderer, 900 stars, 10 hand-drawn card textures) is
@@ -157,13 +124,14 @@ export default function Projects() {
     const jitterScale = narrow ? NARROW_JITTER_SCALE : 1;
     const cardW = CARD_W * cardScale;
     const cardH = CARD_H * cardScale;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     // -------------------------------------------------------------
     // Scene / camera / renderer
     // -------------------------------------------------------------
-    // No scene background: the canvas is transparent so the shared grid
-    // ground (.space-ground on the stack) shows through, identical to the
-    // hero's — which is what keeps the handoff between them invisible.
+    // No scene background: the canvas is transparent so the shared ground
+    // (.space-ground on the stack) shows through, identical to the hero's
+    // black — which is what keeps the handoff between them invisible.
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(GROUND, 0.00075);
 
@@ -236,7 +204,7 @@ export default function Projects() {
       // hard border — so the card has no visible edge and reads as a denser
       // patch of the same black space behind it, not a pasted-on rectangle.
       const pad = 22;
-      const imgH = h * 0.6;
+      const imgH = h * IMAGE_FRACTION;
       const vignette = ctx.createRadialGradient(
         w / 2, imgH * 0.5, 0,
         w / 2, imgH * 0.5, Math.max(w, imgH) * 0.62
@@ -346,23 +314,85 @@ export default function Projects() {
       );
       mesh.userData = { project, baseScale: 1, hovered: false };
 
-      // pixel-pet overlay, sitting where the old placeholder image was
-      const species = i % 2 === 0 ? "cat" : "dog";
-      const petCanvas = document.createElement("canvas");
-      petCanvas.width = 96; petCanvas.height = 72;
-      const petCtx = petCanvas.getContext("2d");
-      drawPet(petCtx, species, 0, petCanvas.width, petCanvas.height);
-      const petTex = new THREE.CanvasTexture(petCanvas);
-      petTex.magFilter = THREE.NearestFilter;
-      petTex.minFilter = THREE.NearestFilter;
-      const petMat = new THREE.MeshBasicMaterial({ map: petTex, transparent: true });
-      const petMesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(120 * cardScale, 90 * cardScale),
-        petMat
-      );
-      petMesh.position.set(0, 38 * cardScale, 0.5);
-      mesh.add(petMesh);
-      mesh.userData.pet = { species, frame: 0, ctx: petCtx, tex: petTex, w: petCanvas.width, h: petCanvas.height, mat: petMat, geo: petMesh.geometry };
+      // A real project brings its own small animation into the image area
+      // (see components/previews), which says how big it is and where it sits.
+      const makePreview = PREVIEWS[project.preview];
+      if (makePreview) {
+        const preview = makePreview(PREVIEW_TEX);
+        const { video } = preview;
+        let tex;
+        if (video) {
+          // Reduced motion never plays the clip; it holds on a settled frame.
+          if (reducedMotion) {
+            video.addEventListener("loadeddata", () => { video.currentTime = preview.still; }, { once: true });
+          }
+          tex = new THREE.VideoTexture(video);
+        } else {
+          preview.draw(0);
+          tex = new THREE.CanvasTexture(preview.canvas);
+        }
+        // Both are in the project's real colours; without this, three
+        // treats them as linear and washes them out.
+        tex.colorSpace = THREE.SRGBColorSpace;
+        if (preview.pixelated) tex.magFilter = THREE.NearestFilter;
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex, transparent: true, depthWrite: false,
+          blending: preview.additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+        });
+        let pw, ph, py;
+        if (preview.fill) {
+          // Full bleed: the card's whole image area, edge to edge from the
+          // top, stopping where the title band begins.
+          pw = cardW;
+          ph = cardH * IMAGE_FRACTION;
+          py = cardH / 2 - ph / 2;
+          // Crop like object-fit: cover — fill the width and trim the
+          // height (or the reverse), keeping `focusY` of the clip in view
+          // (0 its top, 1 its bottom).
+          const areaAspect = pw / ph;
+          if (areaAspect > preview.aspect) {
+            tex.repeat.set(1, preview.aspect / areaAspect);
+            tex.offset.set(0, (1 - tex.repeat.y) * (1 - preview.focusY));
+          } else {
+            tex.repeat.set(areaAspect / preview.aspect, 1);
+            tex.offset.set((1 - tex.repeat.x) / 2, 0);
+          }
+        } else {
+          pw = (preview.width ?? preview.size) * cardScale;
+          ph = (preview.height ?? preview.size) * cardScale;
+          py = preview.y * cardScale;
+        }
+        const previewMesh = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), mat);
+        previewMesh.position.set(0, py, 0.5);
+        // Card and preview are both transparent, so three sorts them by
+        // distance and, half a unit apart, the card can win and paint over
+        // it. Drawing previews after all cards fixes the order; the depth
+        // test still hides one behind any nearer card.
+        previewMesh.renderOrder = 1;
+        mesh.add(previewMesh);
+        mesh.userData.preview = { draw: preview.draw, video, tex, mat, geo: previewMesh.geometry };
+      } else {
+        // pixel-pet overlay, sitting where the old placeholder image was
+        const species = i % 2 === 0 ? "cat" : "dog";
+        const petCanvas = document.createElement("canvas");
+        petCanvas.width = 96; petCanvas.height = 72;
+        const petCtx = petCanvas.getContext("2d");
+        drawPet(petCtx, species, 0, petCanvas.width, petCanvas.height);
+        const petTex = new THREE.CanvasTexture(petCanvas);
+        petTex.magFilter = THREE.NearestFilter;
+        petTex.minFilter = THREE.NearestFilter;
+        // Same ordering fix as the previews above: without it the pet can
+        // draw before its card and, writing depth, punch a black box in it.
+        const petMat = new THREE.MeshBasicMaterial({ map: petTex, transparent: true, depthWrite: false });
+        const petMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(120 * cardScale, 90 * cardScale),
+          petMat
+        );
+        petMesh.position.set(0, 38 * cardScale, 0.5);
+        petMesh.renderOrder = 1;
+        mesh.add(petMesh);
+        mesh.userData.pet = { species, frame: 0, ctx: petCtx, tex: petTex, w: petCanvas.width, h: petCanvas.height, mat: petMat, geo: petMesh.geometry };
+      }
 
       cardGroup.add(mesh);
       cardMeshes.push(mesh);
@@ -379,7 +409,7 @@ export default function Projects() {
     // end reads as a dead end in the middle of one continuous journey.
     // -------------------------------------------------------------
     const maxScroll = START_Z - (lastCardZ - 280);
-    const state = { currentZ: START_Z, velocity: 0, mouseX: 0, mouseY: 0, camX: 0, camY: 0 };
+    const state = { currentZ: START_Z, mouseX: 0, mouseY: 0, camX: 0, camY: 0 };
 
     const onMouseMove = (e) => {
       const rect = mount.getBoundingClientRect();
@@ -423,16 +453,21 @@ export default function Projects() {
     const clock = new THREE.Clock();
 
     const tick = () => {
-      if (!activeRef.current) { rafIdRef.current = null; return; }
+      if (!activeRef.current) {
+        rafIdRef.current = null;
+        // The loop is what pauses clips that leave range, so a clip still
+        // playing when the loop itself stops would decode off screen for
+        // good. The range check in the loop restarts it on the way back.
+        cardMeshes.forEach((m) => m.userData.preview?.video?.pause());
+        return;
+      }
       rafIdRef.current = requestAnimationFrame(tick);
       const dt = Math.min(clock.getDelta(), 0.05);
 
       const targetZ = START_Z - progressRef.current * maxScroll;
 
       // ease camera toward the real-scroll-derived position
-      const prevZ = state.currentZ;
       state.currentZ += (targetZ - state.currentZ) * Math.min(1, dt * 8);
-      state.velocity = Math.abs(state.currentZ - prevZ) / Math.max(dt, 0.0001) * 0.06;
 
       // mouse parallax offset
       state.camX += (state.mouseX * 26 - state.camX) * Math.min(1, dt * 3);
@@ -459,12 +494,8 @@ export default function Projects() {
         hoveredMesh = newHovered;
         if (hoveredMesh) {
           hoveredMesh.userData.hovered = true;
-          setHoveredTitle(hoveredMesh.userData.project.title);
-          setHoveredSlug(hoveredMesh.userData.project.slug);
           mount.style.cursor = "pointer";
         } else {
-          setHoveredTitle(null);
-          setHoveredSlug(null);
           mount.style.cursor = "default";
         }
       }
@@ -508,13 +539,32 @@ export default function Projects() {
         });
       }
 
-      // audio feedback
-      if (soundOnRef.current && audioRef.current.gain) {
-        const g = Math.min(0.05, state.velocity * 0.0015);
-        audioRef.current.gain.gain.value += (g - audioRef.current.gain.gain.value) * 0.1;
-        audioRef.current.osc.frequency.value = 50 + state.velocity * 1.5;
-      } else if (audioRef.current.gain) {
-        audioRef.current.gain.gain.value *= 0.9;
+      // Project previews run only while their card is ahead of the camera
+      // and near enough to see through the fog; past that they hold their
+      // last frame, so ten cards of previews cost what one does. Drawn ones
+      // repaint at ~30fps — plenty for a slow turn — and videos play/pause
+      // on the same range, so no clip decodes off screen. Reduced motion
+      // keeps the still frame set at build time.
+      state.elapsed = (state.elapsed || 0) + dt;
+      state.previewTimer = (state.previewTimer || 0) + dt;
+      if (!reducedMotion && state.previewTimer > 1 / 30) {
+        state.previewTimer = 0;
+        cardMeshes.forEach((m) => {
+          const preview = m.userData.preview;
+          if (!preview) return;
+          const ahead = state.currentZ - m.position.z;
+          const inRange = ahead > -60 && ahead < PREVIEW_RANGE;
+          if (preview.video) {
+            // play() rejects if the browser refuses; the card then just
+            // shows the clip's first frame, which is fine.
+            if (inRange && preview.video.paused) preview.video.play().catch(() => {});
+            else if (!inRange && !preview.video.paused) preview.video.pause();
+            return;
+          }
+          if (!inRange) return;
+          preview.draw(state.elapsed);
+          preview.tex.needsUpdate = true;
+        });
       }
 
       // Fades in over Hero (two different worlds — the sky and this), but
@@ -522,18 +572,11 @@ export default function Projects() {
       // black space with the same starfield, and it sits above this one, so
       // it simply covers this: crossfading two identical backgrounds is what
       // makes a continuous stretch of space read as two separate scenes.
-      const p = progressRef.current;
       const stackOpacity = entryRef.current;
       if (stackRef.current) {
         stackRef.current.style.opacity = stackOpacity;
         stackRef.current.style.pointerEvents = stackOpacity > 0.01 ? "auto" : "none";
       }
-
-      // HUD text (direct DOM writes — avoids per-frame React re-render)
-      if (hudRefs.vel.current) hudRefs.vel.current.textContent = state.velocity.toFixed(2);
-      if (hudRefs.z.current) hudRefs.z.current.textContent = Math.round(Math.abs(state.currentZ - START_Z));
-      if (hudRefs.scrl.current) hudRefs.scrl.current.textContent = Math.round(p * 100) + "%";
-      if (hudRefs.scrlBar.current) hudRefs.scrlBar.current.style.width = (p * 100) + "%";
 
       renderer.render(scene, camera);
     };
@@ -559,9 +602,14 @@ export default function Projects() {
         m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose();
         const pet = m.userData.pet;
         if (pet) { pet.geo.dispose(); pet.mat.dispose(); pet.tex.dispose(); }
+        const preview = m.userData.preview;
+        if (preview) {
+          preview.geo.dispose(); preview.mat.dispose(); preview.tex.dispose();
+          // Dropping the source is what actually releases the decoder.
+          if (preview.video) { preview.video.pause(); preview.video.removeAttribute("src"); preview.video.load(); }
+        }
       });
       starGeo.dispose(); starMat.dispose();
-      if (audioRef.current.ctx) audioRef.current.ctx.close?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [everActive, narrow]);
@@ -582,40 +630,6 @@ export default function Projects() {
     >
       <div ref={stackRef} className="space-ground" style={styles.stack}>
         <div ref={mountRef} style={styles.canvasMount} />
-
-        {/* bottom bar — on a phone the three groups can't sit side by side
-            without wrapping into the scene, so the telemetry readouts drop
-            out and only the essentials (project count, sound, progress)
-            stay. */}
-        <div style={{ ...styles.bottomBar, ...(narrow ? styles.bottomBarNarrow : null) }}>
-          {!narrow && (
-            <div ref={hoverLinkRef} style={styles.hoverLink}>
-              {hoveredTitle ? `/work/${hoveredSlug}` : ""}
-            </div>
-          )}
-          <div style={styles.bottomCenter}>
-            {!narrow && (
-              <>
-                <span>VEL <b ref={hudRefs.vel} style={styles.hudNum}>0.00</b></span>
-                <span style={styles.dot}>·</span>
-                <span>Z <b ref={hudRefs.z} style={styles.hudNum}>0</b></span>
-                <span style={styles.dot}>·</span>
-              </>
-            )}
-            <span>{PROJECTS.length} PROJECTS — SCROLL TO FLY</span>
-          </div>
-          <div style={{ ...styles.bottomRight, ...(narrow ? styles.bottomRightNarrow : null) }}>
-            <span onClick={toggleSound} style={styles.sndToggle}>
-              SND [{soundOn ? "ON" : "OFF"}]
-            </span>
-            <span style={styles.scrlWrap}>
-              <span style={{ ...styles.scrlBarTrack, ...(narrow ? styles.scrlBarTrackNarrow : null) }}>
-                <span ref={hudRefs.scrlBar} style={styles.scrlBarFill} />
-              </span>
-              SCRL <b ref={hudRefs.scrl} style={styles.hudNum}>000%</b>
-            </span>
-          </div>
-        </div>
 
         {!ready && <div style={styles.loading}>INITIALIZING FLIGHT…</div>}
       </div>
@@ -651,21 +665,4 @@ const styles = {
     position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
     fontSize: 12, letterSpacing: 2, color: "rgba(255,255,255,0.4)", pointerEvents: "none",
   },
-  bottomBar: {
-    position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", alignItems: "center",
-    justifyContent: "space-between", padding: "16px 24px", fontSize: 11, letterSpacing: 0.5,
-    borderTop: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.7)",
-  },
-  bottomBarNarrow: { padding: "10px 12px", fontSize: 9, gap: 10 },
-  hoverLink: { minWidth: 160, color: ACCENT, fontSize: 11 },
-  bottomCenter: { display: "flex", alignItems: "center", gap: 10 },
-  dot: { opacity: 0.3 },
-  hudNum: { color: "#fff", fontWeight: 700 },
-  bottomRight: { display: "flex", alignItems: "center", gap: 18 },
-  bottomRightNarrow: { gap: 10 },
-  sndToggle: { cursor: "pointer", color: "rgba(255,255,255,0.7)" },
-  scrlWrap: { display: "flex", alignItems: "center", gap: 8 },
-  scrlBarTrack: { width: 60, height: 4, background: "rgba(255,255,255,0.15)", position: "relative", overflow: "hidden" },
-  scrlBarTrackNarrow: { width: 34 },
-  scrlBarFill: { position: "absolute", left: 0, top: 0, bottom: 0, width: "0%", background: ACCENT },
 };

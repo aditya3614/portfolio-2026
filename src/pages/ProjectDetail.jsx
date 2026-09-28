@@ -58,6 +58,16 @@ export default function ProjectDetail() {
         </div>
 
         <p style={styles.description}>{project.description}</p>
+
+        {project.links?.length > 0 && (
+          <div style={styles.links}>
+            {project.links.map((l) => (
+              <a key={l.href} href={l.href} target="_blank" rel="noreferrer" style={styles.link}>
+                {l.label} ↗
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={styles.footerNav}>
@@ -95,6 +105,8 @@ const styles = {
   infoLabel: { fontSize: 11, letterSpacing: 1, color: "rgba(255,255,255,0.4)", marginBottom: 6 },
   infoValue: { fontSize: 14, color: "rgba(255,255,255,0.9)" },
   description: { fontSize: 16, lineHeight: 1.7, color: "rgba(255,255,255,0.75)", fontFamily: "Helvetica, Arial, sans-serif" },
+  links: { display: "flex", gap: 28, flexWrap: "wrap", marginTop: 32, fontSize: 12, letterSpacing: 1 },
+  link: { color: ACCENT, textDecoration: "none" },
   footerNav: {
     display: "flex", justifyContent: "space-between", padding: "24px 32px",
     borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: 13,

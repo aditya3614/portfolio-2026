@@ -91,7 +91,7 @@ const LABELS = [
 // Which photos make the cut, by file number (photo-01 = 1). Kept to a
 // handful on purpose: the constellation reads as a few chosen moments, and
 // each bubble can be big enough to actually see. Edit freely.
-const FEATURED = [1, 2, 5, 9, 11, 14, 19, 20];
+const FEATURED = [1, 2, 3, 4, 5, 6, 7, 9];
 
 const all = sources.map((src, i) => ({ src, label: LABELS[i] || "" }));
 const featured = FEATURED.map((n) => all[n - 1]).filter(Boolean);

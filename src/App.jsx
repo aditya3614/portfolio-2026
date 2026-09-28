@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 // import Hero from "./sections/Hero";
 // import PalaceHero from "./sections/PalaceHero";
-import SunHero from "./sections/SunHero";
+// import SunHero from "./sections/SunHero";
+import RingHero from "./sections/RingHero";
 import Projects from "./sections/Projects";
 import Experience from "./sections/Experience";
 import About from "./sections/About";
@@ -15,7 +16,8 @@ function Home() {
     <>
       {/* <Hero /> */}
       {/* <PalaceHero /> */}
-      <SunHero />
+      {/* <SunHero /> */}
+      <RingHero />
       <Projects />
       <Experience />
       <About />

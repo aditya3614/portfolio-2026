@@ -1,0 +1,139 @@
+/* Ring hero: pitch black — the same ground every section sits on — with the
+   glass the only thing on screen. */
+
+.ring-hero-stack {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  background: var(--ground);
+  touch-action: pan-y;
+}
+
+.ring-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* The name, set like a wordmark: small, widely tracked, top left. */
+.ring-name {
+  position: absolute;
+  top: 40px;
+  left: 44px;
+  margin: 0;
+  font-family: 'Geist', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.42em;
+  color: #fff;
+  pointer-events: none;
+}
+
+/* Each letter surfaces out of the dark on its own beat. */
+.ring-name span {
+  display: inline-block;
+  opacity: 0;
+  filter: blur(6px);
+  animation: ring-letter 1.1s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+
+@keyframes ring-letter {
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+/* --- Title -------------------------------------------------------------
+   Left of the ring, vertically centred. Light weight, tight tracking — it
+   should feel as quiet and precise as the glass, not shout over it. */
+.ring-title-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: clamp(24px, 7vw, 132px);
+  pointer-events: none;
+}
+
+.ring-title {
+  margin: 0;
+  font-family: 'Geist', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 400;
+  font-size: clamp(44px, 5.4vw, 96px);
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+  color: #f2f4f8;
+  will-change: transform, opacity, filter;
+}
+
+.ring-title-line {
+  display: block;
+  white-space: nowrap;
+}
+
+/* Each word sits in its own mask and rises into it — the line never moves,
+   the words surface through it one after another. The padding keeps
+   descenders inside the mask. */
+.ring-word {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding: 0 0.04em 0.12em;
+  margin: 0 0.14em -0.12em -0.04em;
+}
+
+.ring-word-in {
+  display: inline-block;
+  opacity: 0;
+  transform: translate3d(0, 105%, 0);
+  filter: blur(8px);
+  animation: ring-rise 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes ring-rise {
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+/* "light" — warm, like the glow inside the ring, fading into the title's
+   cool white rather than sitting on it as a flat colour. */
+.ring-word-accent {
+  background: linear-gradient(100deg, #ffd2a1 0%, #ff9d4d 45%, #f2f4f8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (max-width: 900px) {
+  .ring-title-wrap {
+    align-items: flex-start;
+    padding-top: clamp(96px, 16vh, 150px);
+  }
+
+  .ring-title {
+    font-size: clamp(38px, 10.5vw, 64px);
+  }
+
+  .ring-name {
+    top: 28px;
+    left: 24px;
+    font-size: 12px;
+    letter-spacing: 0.36em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-name span,
+  .ring-word-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}

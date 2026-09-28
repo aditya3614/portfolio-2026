@@ -75,7 +75,7 @@
   /* A soft pool of ground behind the text, so the dotted path can pass
      underneath without running through the words. */
   padding: 18px 12px;
-  background: radial-gradient(closest-side, rgba(11, 7, 5, 0.9), rgba(11, 7, 5, 0.6) 60%, rgba(11, 7, 5, 0));
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 0));
 }
 .xp-meta {
   display: flex;

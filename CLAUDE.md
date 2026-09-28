@@ -17,14 +17,21 @@ same motion carrying on. Jaw-dropping, but never busy.
 
 ## The journey (page order, `src/App.jsx`)
 
-1. **SunHero** (`sections/SunHero.jsx`) — a dithered pixel sun made of
-   chunky square blocks with hairline gaps, six-step heat palette. Scroll
-   flies the camera into it until the blocks fall away. A few pixel comets
-   drift behind.
+1. **RingHero** (`sections/RingHero.jsx`) — one thick glass ring (three.js
+   MeshPhysicalMaterial transmission) in a pitch-black void, modelled on the
+   vanta.supply hero. Lit by soft panels baked into an env map, held at one
+   chosen angle (`ENV_ANGLE`) with a small sway — a full turn passes through
+   angles where the ring goes dark. Warm light lives *inside* it: a glowing
+   filament in the band, a heart glow, a half ring of orbiting dust in the
+   hole and glitter suspended in the glass (all opaque-additive so the
+   transmission pass refracts them). Title "Bending light into interfaces."
+   on the left, the ring right of centre. Scroll squares the ring up, slides
+   it to centre, winds the dust into a fast spin and flies into the hole
+   until its dark centre fills the frame — Projects fades in over that.
 2. **Projects** (`sections/Projects.jsx`) — three.js "space flight gallery".
    Project cards alternate left/right of a straight camera path, spaced in
-   depth; scrolling flies forward through them. Mono HUD along the bottom
-   (VEL / Z / SCRL). Cards link to `/work/:slug` (`pages/ProjectDetail.jsx`).
+   depth; scrolling flies forward through them. No HUD or footer bar — just
+   the cards. Cards link to `/work/:slug` (`pages/ProjectDetail.jsx`).
 3. **Experience** (`sections/Experience.jsx`) — company names spelled in the
    sun's blocks, hung like stars along a zig-zag corridor (same left/right
    rhythm as Projects). A dotted line draws from one company to the next and
@@ -36,13 +43,14 @@ same motion carrying on. Jaw-dropping, but never busy.
    into a ring, the story plays one paragraph at a time with hand-drawn inline
    effects, and it ends on a contact screen.
 
-`Hero.jsx` and `PalaceHero.jsx` are older hero experiments, currently unused.
+`SunHero.jsx` (the dithered pixel sun), `Hero.jsx` and `PalaceHero.jsx` are
+older hero experiments, currently unused.
 
 ## Visual language
 
-- **Ground:** warm near-black `#0b0705` with a faint 44px grid
-  (`.space-ground` in `index.css`, `GROUND` in `theme.js`). Every section sits
-  on it so crossfades between sections are invisible.
+- **Ground:** plain pitch black `#000000`, no grid (`.space-ground` /
+  `--ground` in `index.css`, `GROUND` in `theme.js`). Every section sits on
+  it so crossfades between sections are invisible.
 - **Accent:** one red, `#ff3b30` (`ACCENT` in `theme.js`). Used sparingly —
   eyebrow labels, role titles, markers, the flyer's cape.
 - **The sun palette** (SunHero, reused by Experience's block text):
@@ -121,6 +129,8 @@ Poppins, teal/mint). It is **not** this project's theme; don't apply it.
 - A second copy of About's globe drawn inside Experience — keep one globe.
 - The character jumping into the globe, and hyperspace streak lines — the
   transition should be the camera alone.
+- The faint 44px grid over the ground — removed; the background is plain
+  black everywhere.
 - "SCROLL" hint text between Projects and Experience.
 - Hard fades where one section just replaces another.
 

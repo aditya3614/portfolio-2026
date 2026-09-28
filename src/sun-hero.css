@@ -1,16 +1,24 @@
 /* Sun hero: a single dithered sun on the shared grid ground. Everything is
    position:fixed and driven from SunHero.jsx's render loop; the scroll
-   distance itself comes from the section height. */
+   distance itself comes from the section height. The intro choreography
+   for the chrome (HUD, eyebrow, sub-line) is plain CSS keyed off classes the
+   render loop adds — .is-forging when the title starts forming, .is-forged
+   once it's real type — so it stays in step with the canvas work even when
+   the webfont is slow. */
 
 .sun-hero-stack {
+  --mono: 'Courier New', monospace;
+  --accent: #ff3b30;
   position: fixed;
   inset: 0;
   z-index: 2;
   overflow: hidden;
+  touch-action: pan-y;
 }
 
 .comet-canvas,
-.sun-canvas {
+.sun-canvas,
+.spark-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -22,41 +30,289 @@
   inset: 0;
   display: flex;
   align-items: center;
-  /* The hollow reaches much further right than the sun's own outer edge
-     suggests (see CUT_DIST/CUT_R in SunHero.jsx — the ribbon itself only
-     starts at ~74% of the way from the sun's centre to its rim). Pulled in
-     to sit inside that hollow rather than past the disc's outer boundary —
-     eased back a bit further left of the ribbon itself so there's a wider
-     column for the text to sit in without crowding it. */
-  padding-left: clamp(180px, 34vw, 460px);
+  /* The title sits in the sun's hollow — the bitten-out side reaches well
+     left of the lit ribbon (see CUT_DIST/CUT_R in SunHero.jsx), so the text
+     starts close to the left edge and finishes long before the ribbon. */
+  padding-left: clamp(24px, 10vw, 180px);
   padding-right: 24px;
   pointer-events: none;
 }
 
-.sun-title {
-  margin: 0;
-  max-width: 12ch;
-  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-weight: 500;
-  font-size: clamp(30px, 4.6vw, 76px);
-  line-height: 0.98;
-  letter-spacing: -0.03em;
-  color: #fff;
-  transform-origin: left center;
-  will-change: opacity, transform;
+.sun-copy {
+  --chrome: 1;
 }
 
-/* Narrow screens: the sun sits centred below, so the title moves to the top
-   rather than over the brightest part of it. */
+/* --- Eyebrow: typed out, one monospace character per step ------------- */
+.sun-eyebrow {
+  margin: 0 0 clamp(16px, 2.2vw, 28px);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: var(--chrome);
+}
+
+.sun-eyebrow span {
+  display: inline-block;
+  /* clip-path rather than width: letter-spacing makes `ch` widths lie, but
+     clipping the laid-out line works whatever it measures. */
+  clip-path: inset(0 100% 0 0);
+}
+
+.is-forging .sun-eyebrow span {
+  animation: sun-type 0.7s steps(19) 0.55s forwards;
+}
+
+@keyframes sun-type {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* --- Title ------------------------------------------------------------ */
+.sun-title {
+  position: relative;
+  margin: 0;
+  font-family: 'Geist', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 500;
+  font-size: clamp(44px, 6vw, 100px);
+  line-height: 0.94;
+  letter-spacing: -0.045em;
+  color: #fff;
+  transform-origin: left center;
+  will-change: transform;
+}
+
+.sun-title-line {
+  display: block;
+  white-space: nowrap;
+  /* Hidden while the canvas forges the blocks, then cross-faded in — the
+     render loop sets --type. */
+  opacity: var(--type, 0);
+}
+
+/* Bleeds past the h1 by TITLE_MARGIN (pixelTitle.js) on every side, so the
+   chunkiest blocks can overhang the letterforms. */
+.sun-title-canvas {
+  position: absolute;
+  inset: -48px;
+  width: calc(100% + 96px);
+  height: calc(100% + 96px);
+  pointer-events: none;
+}
+
+/* The full stop is a single red pixel — the one block of accent in the
+   hero — that blinks like a text cursor once the title has resolved. */
+.sun-title-dot {
+  display: inline-block;
+  width: 0.15em;
+  height: 0.15em;
+  margin-left: 0.07em;
+  background: var(--accent);
+  transform: scale(0);
+  transform-origin: center;
+}
+
+.is-forged .sun-title-dot {
+  animation:
+    sun-dot-in 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) forwards,
+    sun-blink 1.1s steps(1) 1.2s infinite;
+}
+
+@keyframes sun-dot-in {
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes sun-blink {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0);
+  }
+}
+
+/* --- Sub-line ---------------------------------------------------------- */
+.sun-sub {
+  max-width: 36ch;
+  margin: clamp(20px, 2.6vw, 34px) 0 0;
+  font-family: 'Geist', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: clamp(14px, 1.1vw, 17px);
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.56);
+  opacity: var(--chrome);
+}
+
+/* The entrance lives on the inner span, the scroll-driven fade on the
+   paragraph — so scrolling mid-animation still clears it. */
+.sun-sub span {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.is-forged .sun-sub span {
+  animation: sun-rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s forwards;
+}
+
+@keyframes sun-rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- HUD ---------------------------------------------------------------- */
+.sun-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sun-hud-cell {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+  /* backwards, not both: once finished it lets go, so the render loop's
+     inline opacity (the scroll fade) is what shows. */
+  animation: sun-fade 0.8s ease-out backwards;
+}
+
+.sun-hud-cell b {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.sun-hud-cell.tl { top: 34px; left: 38px; animation-delay: 0.35s; }
+.sun-hud-cell.tr { top: 34px; right: 38px; text-align: right; align-items: flex-end; animation-delay: 0.45s; }
+.sun-hud-cell.bl { bottom: 34px; left: 38px; flex-direction: row; align-items: center; gap: 12px; animation-delay: 1.6s; }
+.sun-hud-cell.br { bottom: 34px; right: 38px; text-align: right; align-items: flex-end; animation-delay: 0.55s; }
+
+@keyframes sun-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Corner ticks, like a viewfinder's frame lines. Each is one L drawn with
+   two borders, and they snap in from the corners. */
+.sun-hud-tick {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 0 solid rgba(255, 255, 255, 0.32);
+  animation: sun-tick 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s backwards;
+}
+
+.sun-hud-tick.tl { top: 18px; left: 18px; border-top-width: 1px; border-left-width: 1px; transform-origin: top left; }
+.sun-hud-tick.tr { top: 18px; right: 18px; border-top-width: 1px; border-right-width: 1px; transform-origin: top right; }
+.sun-hud-tick.bl { bottom: 18px; left: 18px; border-bottom-width: 1px; border-left-width: 1px; transform-origin: bottom left; }
+.sun-hud-tick.br { bottom: 18px; right: 18px; border-bottom-width: 1px; border-right-width: 1px; transform-origin: bottom right; }
+
+@keyframes sun-tick {
+  from {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+/* Three stacked blocks lighting top to bottom, over and over — a scroll cue
+   in the sun's own pixels rather than an arrow. */
+.sun-scroll-cue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sun-scroll-cue i {
+  width: 5px;
+  height: 5px;
+  background: #ff8a00;
+  opacity: 0.15;
+  animation: sun-cue 1.5s steps(1) infinite;
+}
+
+.sun-scroll-cue i:nth-child(2) { animation-delay: 0.2s; background: #ff4d0d; }
+.sun-scroll-cue i:nth-child(3) { animation-delay: 0.4s; background: #b33100; }
+
+@keyframes sun-cue {
+  0% { opacity: 1; }
+  30% { opacity: 0.15; }
+}
+
+/* Narrow screens: the sun sits centred below, so the copy moves to the top
+   rather than over the brightest part of it, and the HUD thins out. */
 @media (max-width: 900px) {
   .sun-title-wrap {
     align-items: flex-start;
-    padding-top: clamp(64px, 12vh, 120px);
+    padding-top: clamp(96px, 15vh, 150px);
     padding-left: 24px;
   }
 
   .sun-title {
-    max-width: 14ch;
-    font-size: clamp(36px, 8.6vw, 64px);
+    font-size: clamp(40px, 11vw, 72px);
+  }
+
+  .sun-eyebrow {
+    font-size: 11px;
+  }
+
+  .sun-hud-cell {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+  }
+
+  .sun-hud-cell.tl,
+  .sun-hud-cell.tr { top: 26px; }
+  .sun-hud-cell.tl,
+  .sun-hud-cell.bl { left: 26px; }
+  .sun-hud-cell.tr,
+  .sun-hud-cell.br { right: 26px; }
+  .sun-hud-cell.bl,
+  .sun-hud-cell.br { bottom: 26px; }
+
+  .sun-hud-tick.tl,
+  .sun-hud-tick.tr { top: 12px; }
+  .sun-hud-tick.tl,
+  .sun-hud-tick.bl { left: 12px; }
+  .sun-hud-tick.tr,
+  .sun-hud-tick.br { right: 12px; }
+  .sun-hud-tick.bl,
+  .sun-hud-tick.br { bottom: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sun-eyebrow span {
+    clip-path: none;
+  }
+
+  .sun-sub span {
+    opacity: 1;
+    transform: none;
+  }
+
+  .sun-title-dot {
+    transform: none;
+  }
+
+  .is-forging .sun-eyebrow span,
+  .is-forged .sun-title-dot,
+  .is-forged .sun-sub span,
+  .sun-hud-cell,
+  .sun-hud-tick,
+  .sun-scroll-cue i {
+    animation: none;
   }
 }
