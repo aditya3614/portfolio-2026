@@ -1,8 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import RingHero from "./sections/RingHero";
 import Projects from "./sections/Projects";
-// The journey version of Experience — kept, but not rendered.
-// import Experience from "./sections/Experience";
 import ExperienceWheel from "./sections/ExperienceWheel";
 import About from "./sections/About";
 import ProjectDetail from "./pages/ProjectDetail";
@@ -15,7 +13,6 @@ function Home() {
     <>
       <RingHero />
       <Projects />
-      {/* <Experience /> */}
       <ExperienceWheel />
       <About />
     </>

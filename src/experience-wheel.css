@@ -23,12 +23,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 22px 32px;
-  font-size: 11px;
-  letter-spacing: 2px;
   pointer-events: none;
   z-index: 2;
 }
-.xw-counter { color: rgba(255, 255, 255, 0.55); font-variant-numeric: tabular-nums; }
 
 /* The stage the cards turn in. pan-y, never none — see Projects.jsx. */
 .xw-stage {
@@ -141,7 +138,7 @@
 }
 
 /* Phones: no room either side of the drum — the caption goes underneath and
-   the list steps aside for the counter. */
+   the list steps aside. */
 @media (max-width: 759px) {
   .xw-top { padding: 18px 16px; }
   /* The drum rides high, leaving the lower part of the screen to the

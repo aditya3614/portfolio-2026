@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as THREE from "three";
 import { PROJECTS, ACCENT } from "../data/projects";
+import SectionLabel from "../components/SectionLabel";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
 import { GROUND } from "../theme";
 import { PREVIEWS } from "../components/previews";
@@ -760,6 +761,10 @@ export default function Projects() {
     >
       <div ref={stackRef} className="space-ground" style={styles.stack}>
         <div ref={mountRef} style={styles.canvasMount} />
+
+        <div className="section-top">
+          <SectionLabel>Projects</SectionLabel>
+        </div>
 
         {!ready && <div style={styles.loading}>INITIALIZING FLIGHT…</div>}
       </div>

@@ -29,31 +29,39 @@ body {
   background-color: var(--ground);
 }
 
-.page {
-  min-height: 100vh;
-  background: #f4f4ec;
+/* Section label (components/SectionLabel.jsx). White, not the red accent —
+   the accent is kept for the few things that should catch the eye, and a
+   label repeated on every section isn't one of them. The word carries a
+   faint white-to-silver sweep so it reads as lit rather than printed.
+   Geist Mono instead of Courier New: same HUD voice, cleaner at 11px. */
+.section-label {
+  display: inline-block;
+  font-family: "Geist Mono", "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  background: linear-gradient(100deg, #ffffff 0%, #ffffff 35%, #a7abb6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.navbar {
-  width: 100%;
-  padding: 28px 34px;
+/* Top bar for a section that has nothing but its label (Projects). Same
+   placement as Experience's .xw-top and About's topBar so the label doesn't
+   shift between sections. */
+.section-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
+  padding: 22px 32px;
+  pointer-events: none;
+  z-index: 2;
 }
-
-.logo {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  transform: rotate(-7deg);
-}
-
-.menu {
-  border: 0;
-  background: transparent;
-  color: #171717;
-  font-family: inherit;
-  font-size: 9px;
-  cursor: pointer;
+@media (max-width: 759px) {
+  .section-top { padding: 18px 16px; }
 }

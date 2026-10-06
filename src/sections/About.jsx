@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { ABOUT, CONTACT, PHOTOS } from "../data/about";
-import { ACCENT } from "../theme";
+import SectionLabel from "../components/SectionLabel";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
 import "../about.css";
 import { RUNNER_FRAMES } from "../components/runner";
@@ -1065,7 +1065,7 @@ export default function About() {
         <div ref={coreRef} className="about-core" />
 
         <div style={styles.topBar}>
-          <span style={styles.eyebrow}>{ABOUT.eyebrow}</span>
+          <SectionLabel>{ABOUT.eyebrow}</SectionLabel>
         </div>
 
         <div ref={titleRef} style={styles.title}>
@@ -1202,7 +1202,6 @@ const styles = {
     alignItems: "center", justifyContent: "space-between", padding: "22px 32px",
     fontSize: 11, letterSpacing: 2, color: "rgba(255,255,255,0.75)",
   },
-  eyebrow: { color: ACCENT },
   title: {
     position: "absolute", top: "10vh", left: 0, right: 0, padding: "0 24px",
     display: "flex", justifyContent: "center", textAlign: "center",

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EXPERIENCE } from "../data/experience";
 import { ACCENT, GROUND } from "../theme";
+import SectionLabel from "../components/SectionLabel";
 import { useScrollProgressRef } from "../hooks/useScrollProgress";
 import { paintCard } from "../components/wheelCards";
 import { qAxis, qIdentity, qRot, qSlerp, cssMatrix } from "../components/quat";
@@ -28,8 +29,6 @@ import "../experience-wheel.css";
  * The cards are DOM with CSS 3D transforms, written every frame from a few
  * lines of maths below; their art is painted once into a canvas each. Driven
  * by real document scroll via useScrollProgressRef, like every section.
- *
- * (The earlier journey version lives in Experience.jsx, kept but unused.)
  */
 
 const COUNT = EXPERIENCE.length;
@@ -324,10 +323,7 @@ export default function ExperienceWheel() {
     >
       <div ref={stackRef} className="space-ground xw-stack" style={{ backgroundColor: GROUND }}>
         <div className="xw-top">
-          <span style={{ color: ACCENT }}>EXPERIENCE</span>
-          <span className="xw-counter">
-            {item.id} / {String(COUNT).padStart(2, "0")}
-          </span>
+          <SectionLabel>Experience</SectionLabel>
         </div>
 
         <div ref={stageRef} className="xw-stage" style={{ perspective: `${PERSPECTIVE}px` }}>

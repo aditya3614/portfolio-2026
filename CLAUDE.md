@@ -34,17 +34,16 @@ same motion carrying on. Jaw-dropping, but never busy.
    the cards. Clicking a card opens its live site in a new tab; only its
    "VIEW CASE STUDY" label opens `/work/:slug` (`pages/ProjectDetail.jsx`).
    Hovering a card lights a thin, cool-white frame with a travelling glare.
-3. **Experience** (`sections/ExperienceWheel.jsx` — the one rendered) —
+3. **Experience** (`sections/ExperienceWheel.jsx`) —
    one card per role, each a dithered pixel sun in the hero's palette, drawn
    as a crescent that fills in role by role (a sliver at the first job, the
    full sun at Juspay). The cards open as a ring around the title; scrolling
    swings the ring a quarter turn so it's seen edge-on as a drum, then spins
    the drum so each role comes round to the front, neighbours tipped away
    above and below. Caption on the left, role list top right.
-   The earlier version, `sections/Experience.jsx` (company names in blocks
-   along a zig-zag corridor, a doodled runner travelling between them), is
-   kept in the repo but not rendered — see the commented import in
-   `App.jsx`.
+   An earlier version (company names in blocks along a zig-zag corridor, a
+   doodled runner travelling between them) has been deleted; it's in git
+   history.
 4. **About** (`sections/About.jsx`) — a dust globe that comes up out of the
    dark as Experience flies toward it, then the camera dives in; photos bloom
    into a ring, the story plays one paragraph at a time with hand-drawn inline
@@ -59,18 +58,23 @@ have been deleted; they're in git history if ever needed.
   `--ground` in `index.css`, `GROUND` in `theme.js`). Every section sits on
   it so crossfades between sections are invisible.
 - **Accent:** one red, `#ff3b30` (`ACCENT` in `theme.js`). Used sparingly —
-  eyebrow labels, role titles, markers, the flyer's cape.
+  role titles, markers, the flyer's cape. Not the section labels.
+- **Section labels** (`components/SectionLabel.jsx`, `.section-label` in
+  `index.css`): "Projects / Experience / About" top-left of each section, in
+  Geist Mono, white with a faint white-to-silver sweep. No index numbers or
+  counters. Use it for any new section rather than a one-off label.
 - **The sun palette** (from the old SunHero, used by Experience's block text):
   `#ffe800 #ffc400 #ff8a00 #ff4d0d #b33100 #6b1d00`, hot core to cold rim.
 - **About's palette** is cool: periwinkle / ice blue / white / a little mint.
   The page moves from warm (sun) to cool (About's globe).
-- **Type:** HUD and metadata in `'Courier New', monospace`, small, uppercase,
+- **Type:** section labels in Geist Mono; other HUD and
+  metadata in `'Courier New', monospace`, small, uppercase,
   wide letter-spacing. Display copy in Geist/Helvetica. Pixel-block text is
   sampled from Arial Black onto a block grid.
 - **The doodle character** (`components/runner.js`): a hand-drawn cream
   (`#f4ede4`) stick figure with an SVG turbulence "line boil" so it jitters
-  like flipbook frames. Shared by About (the chase under "feeling") and
-  the old Experience journey. All poses live in that file.
+  like flipbook frames. Used by About's chase under "feeling"; its two run
+  frames live in that file.
 - **Shapes:** square blocks, hairline gaps, specks of dust. No rounded
   glassy UI, no gradients-for-decoration.
 
@@ -114,7 +118,7 @@ Poppins, teal/mint). It is **not** this project's theme; don't apply it.
 - **Comments explain *why*,** in full sentences, generously — match that
   density and voice when editing.
 - Plain JS/JSX (no TypeScript), inline style objects or a section CSS file
-  (`about.css`, `experience.css`, `ring-hero.css`). React 19, Vite, three.js
+  (`about.css`, `experience-wheel.css`, `ring-hero.css`). React 19, Vite, three.js
   for RingHero/Projects/About, canvas 2D for Experience.
 
 ## Content lives in `src/data/`
@@ -143,9 +147,10 @@ Poppins, teal/mint). It is **not** this project's theme; don't apply it.
 
 ## Working on it
 
-- `npm run dev` to run; `npm run build` must pass. `npm run lint` has a few
-  known older errors in `Projects.jsx`, `Astronaut.jsx` and
-  `ProjectDetail.jsx`; don't add new ones, and lint the files you touch.
+- `npm run dev` to run; `npm run build` must pass. `npm run lint` has one
+  known older error in `src/` (a setState-in-effect in `Projects.jsx`) and
+  the Node scripts in `promo/` aren't set up for it; don't add new ones, and
+  lint the files you touch.
 - Visual checks: screenshot key scroll positions at desktop (1440×900) and
   phone (390×844) — e.g. with Playwright, scrolling to computed positions
   within a section's height — before calling a visual change done.
