@@ -20,7 +20,7 @@ same motion carrying on. Jaw-dropping, but never busy.
 1. **RingHero** (`sections/RingHero.jsx`) — one thick glass ring (three.js
    MeshPhysicalMaterial transmission) in a pitch-black void, modelled on the
    vanta.supply hero. Lit by soft panels baked into an env map, held at one
-   chosen angle (`ENV_ANGLE`) with a small sway — a full turn passes through
+   chosen angle (`ENV_ANGLE`) with a small sway, and two dim point lights (`GLINTS`, one white, one orange) orbit slowly in front so small glints drift across the glass — a full turn passes through
    angles where the ring goes dark. Warm light lives *inside* it: a glowing
    filament in the band, a heart glow, a half ring of orbiting dust in the
    hole and glitter suspended in the glass (all opaque-additive so the
@@ -31,20 +31,27 @@ same motion carrying on. Jaw-dropping, but never busy.
 2. **Projects** (`sections/Projects.jsx`) — three.js "space flight gallery".
    Project cards alternate left/right of a straight camera path, spaced in
    depth; scrolling flies forward through them. No HUD or footer bar — just
-   the cards. Cards link to `/work/:slug` (`pages/ProjectDetail.jsx`).
-3. **Experience** (`sections/Experience.jsx`) — company names spelled in the
-   sun's blocks, hung like stars along a zig-zag corridor (same left/right
-   rhythm as Projects). A dotted line draws from one company to the next and
-   a doodled stick figure travels it — **run → cycle → surf → fly
-   (Superman, red cape)** — ending at Juspay, arms up. The camera then
-   carries straight on toward About's globe.
+   the cards. Clicking a card opens its live site in a new tab; only its
+   "VIEW CASE STUDY" label opens `/work/:slug` (`pages/ProjectDetail.jsx`).
+   Hovering a card lights a thin, cool-white frame with a travelling glare.
+3. **Experience** (`sections/ExperienceWheel.jsx` — the one rendered) —
+   one card per role, each a dithered pixel sun in the hero's palette, drawn
+   as a crescent that fills in role by role (a sliver at the first job, the
+   full sun at Juspay). The cards open as a ring around the title; scrolling
+   swings the ring a quarter turn so it's seen edge-on as a drum, then spins
+   the drum so each role comes round to the front, neighbours tipped away
+   above and below. Caption on the left, role list top right.
+   The earlier version, `sections/Experience.jsx` (company names in blocks
+   along a zig-zag corridor, a doodled runner travelling between them), is
+   kept in the repo but not rendered — see the commented import in
+   `App.jsx`.
 4. **About** (`sections/About.jsx`) — a dust globe that comes up out of the
    dark as Experience flies toward it, then the camera dives in; photos bloom
    into a ring, the story plays one paragraph at a time with hand-drawn inline
    effects, and it ends on a contact screen.
 
-`SunHero.jsx` (the dithered pixel sun), `Hero.jsx` and `PalaceHero.jsx` are
-older hero experiments, currently unused.
+Older hero experiments (the dithered pixel `SunHero`, `Hero`, `PalaceHero`)
+have been deleted; they're in git history if ever needed.
 
 ## Visual language
 
@@ -53,7 +60,7 @@ older hero experiments, currently unused.
   it so crossfades between sections are invisible.
 - **Accent:** one red, `#ff3b30` (`ACCENT` in `theme.js`). Used sparingly —
   eyebrow labels, role titles, markers, the flyer's cape.
-- **The sun palette** (SunHero, reused by Experience's block text):
+- **The sun palette** (from the old SunHero, used by Experience's block text):
   `#ffe800 #ffc400 #ff8a00 #ff4d0d #b33100 #6b1d00`, hot core to cold rim.
 - **About's palette** is cool: periwinkle / ice blue / white / a little mint.
   The page moves from warm (sun) to cool (About's globe).
@@ -63,7 +70,7 @@ older hero experiments, currently unused.
 - **The doodle character** (`components/runner.js`): a hand-drawn cream
   (`#f4ede4`) stick figure with an SVG turbulence "line boil" so it jitters
   like flipbook frames. Shared by About (the chase under "feeling") and
-  Experience (the journey). All poses live in that file.
+  the old Experience journey. All poses live in that file.
 - **Shapes:** square blocks, hairline gaps, specks of dust. No rounded
   glassy UI, no gradients-for-decoration.
 
@@ -107,15 +114,15 @@ Poppins, teal/mint). It is **not** this project's theme; don't apply it.
 - **Comments explain *why*,** in full sentences, generously — match that
   density and voice when editing.
 - Plain JS/JSX (no TypeScript), inline style objects or a section CSS file
-  (`about.css`, `experience.css`, `sun-hero.css`). React 19, Vite, three.js
-  for Projects/About, canvas 2D for SunHero/Experience.
+  (`about.css`, `experience.css`, `ring-hero.css`). React 19, Vite, three.js
+  for RingHero/Projects/About, canvas 2D for Experience.
 
 ## Content lives in `src/data/`
 
 - `experience.js` — roles, oldest first (Juspay, current, last). Company
   names are rendered as block text; `role`, `period`, `blurb` are shown
   underneath. Keep facts as the owner wrote them; polishing wording is fine.
-- `projects.js` — project cards (currently placeholders).
+- `projects.js` — project cards, each with a live preview from `components/previews`.
 - `about.js` — About copy (with inline effect markup, documented there),
   the photo manifest, and contact links.
 

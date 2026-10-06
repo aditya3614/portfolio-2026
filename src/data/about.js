@@ -5,8 +5,7 @@ export const ABOUT = {
 
   // Sits above the dust sphere before the dive. Gone as soon as the
   // camera starts moving, so it only has to hold a beat.
-  heading: "A world built out of\nthe places I've been.",
-  meta: ["BASED IN BANGALORE", "AVAILABLE FOR WORK"],
+  heading: "A little peek\ninto my life.",
 
   // Centred in the photo constellation after the burst, one paragraph at a
   // time — each gets its own stretch of scroll; the current one lifts away
@@ -24,7 +23,7 @@ export const ABOUT = {
   // Each one plays as its paragraph comes in.
   story: [
     "Hi, I’m {Aditya Dave}.",
-    "I believe there’s {magic|magic} in software—the kind that only happens when {mark|product}, {mark|design}, and {mark|engineering} work as one.",
+    "I believe there’s magic in software the kind that only happens when {mark|product}, {mark|design}, and {mark|engineering} work as one.",
     "I’m a {underline|frontend engineer} who sits somewhere between design and code.",
     "I take rough ideas, figure out how they should feel, and obsess over the details until it actually {circle|feels right}.",
     "This portfolio is basically a collection of things I’ve built {chase|while chasing that feeling}." 
@@ -40,67 +39,45 @@ export const ABOUT = {
 // 3-4k phone photos; a 3024x4032 JPEG costs ~48MB of GPU memory once decoded,
 // on a print that never renders more than a few hundred pixels across.
 //
-// To regenerate after adding to src/assets/photos/:
+// To add one: drop the original in src/assets/photos/, then convert it to the
+// next free number (say 16) here:
 //
-//   i=0; for f in src/assets/photos/*; do i=$((i+1)); \
-//     ffmpeg -v error -y -i "$f" \
-//       -vf "crop='min(iw,ih*0.8)':'min(ih,iw/0.8)',scale=512:640:flags=lanczos" \
-//       -q:v 4 "$(printf 'src/assets/photos-web/photo-%02d.jpg' $i)"; done
+//   ffmpeg -v error -y -i "src/assets/photos/<file>" \
+//     -vf "crop='min(iw,ih*0.8)':'min(ih,iw/0.8)',scale=512:640:flags=lanczos" \
+//     -q:v 4 src/assets/photos-web/photo-16.jpg
 //
-// Globbed rather than imported one by one, so dropping more files in and
-// re-running the command above is the whole workflow. Each photo becomes one
-// bubble; the layout spreads itself over however many there are.
+// ...and add 16 to FEATURED below, with a label if you like.
 // ---------------------------------------------------------------------------
 const files = import.meta.glob("../assets/photos-web/*.jpg", {
   eager: true,
   import: "default",
 });
 
-// Sorted by path: import.meta.glob's key order isn't guaranteed, and an
-// unstable order would reshuffle the photos between builds.
-const sources = Object.keys(files)
-  .sort()
-  .map((k) => files[k]);
+// photo-07.jpg -> 7
+const byNumber = Object.fromEntries(
+  Object.entries(files).map(([path, src]) => [Number(path.match(/photo-(\d+)\.jpg$/)?.[1]), src])
+);
 
-// Hover labels, by position in the sorted list above (photo-01 first). Shown
-// in the pill above a bubble and under the photo when it's opened. Leave an
-// entry empty and that bubble simply has no label.
-const LABELS = [
-  "the dalmatian",
-  "friday night",
-  "friday night, again",
-  "boats at dusk",
-  "golden hour",
-  "sun through the trees",
-  "last light",
-  "boatyard",
-  "road trip",
-  "beach sunset",
-  "birthday",
-  "the horse",
-  "under the canopy",
-  "dessert first",
-  "canopy, again",
-  "photobooth strips",
-  "festival day",
-  "mirror selfie",
-  "bollywood night",
-  "good company",
-];
+// Hover labels, by file number. Shown in the pill above a bubble and under
+// the photo when it's opened. Leave one out and that bubble has no label.
+// Empty for now: the photos run without captions.
+const LABELS = {};
 
-// Which photos make the cut, by file number (photo-01 = 1). Kept to a
-// handful on purpose: the constellation reads as a few chosen moments, and
+// Which photos make the cut, by file number, in order round the ring. Kept to
+// a handful on purpose: the constellation reads as a few chosen moments, and
 // each bubble can be big enough to actually see. Edit freely.
-const FEATURED = [1, 2, 3, 4, 5, 6, 7, 9];
+const FEATURED = [1, 13, 2, 14, 4, 15, 12];
 
-const all = sources.map((src, i) => ({ src, label: LABELS[i] || "" }));
-const featured = FEATURED.map((n) => all[n - 1]).filter(Boolean);
+const featured = FEATURED.filter((n) => byNumber[n]).map((n) => ({
+  src: byNumber[n],
+  label: LABELS[n] || "",
+}));
 
-export const PHOTOS = sources.length
-  ? featured.length ? featured : all
+export const PHOTOS = featured.length
+  ? featured
   : // Nothing in photos-web/ yet: coloured bubbles with no image, so the
     // constellation still forms.
-    Array.from({ length: 10 }, () => ({ src: null, label: "" }));
+    Array.from({ length: 7 }, () => ({ src: null, label: "" }));
 
 // ---------------------------------------------------------------------------
 // The last screen of the page. Fill in each href; one left empty still shows
@@ -112,11 +89,11 @@ export const CONTACT = {
   badge: "Open to work",
   heading: "Let's build something\nthat feels right.",
   links: [
-    { id: "instagram", label: "Instagram", href: "" },
-    { id: "x", label: "Twitter / X", href: "" },
-    { id: "linkedin", label: "LinkedIn", href: "" },
-    { id: "substack", label: "Substack", href: "" },
-    { id: "github", label: "GitHub", href: "" },
-    { id: "email", label: "Email", href: "" }, // "mailto:you@example.com"
+    { id: "instagram", label: "Instagram", href: "https://www.instagram.com/aditya_dave89/" },
+    { id: "x", label: "Twitter / X", href: "https://x.com/adityadave89" },
+    { id: "linkedin", label: "LinkedIn", href: "https://www.linkedin.com/in/aditya-dave-aa68961b9/" },
+    { id: "substack", label: "Substack", href: "https://substack.com/@adityadavee" },
+    { id: "github", label: "GitHub", href: "https://github.com/aditya3614" },
+    { id: "email", label: "Email", href: "mailto:adityadave992@gmail.com" },
   ],
 };

@@ -1,6 +1,9 @@
 // ---------------------------------------------------------------------------
 // Repo Atlas card preview — the project's own landing globe, in miniature.
 //
+// The card now shows the whole hero (repoAtlasHero.js), which draws this
+// globe over its skyline; the notes below are about the globe itself.
+//
 // A port of Repo Atlas's GlobeBackdrop (src/components/GlobeBackdrop.tsx in
 // that repo): nine seeded orbits whose crossings make a sphere, one pink
 // orbit carrying a soft filled disc, and specks riding the orbits like

@@ -16,8 +16,8 @@ import { RUNNER_FRAMES } from "../components/runner";
  *     starfield, drifting gently, that the rest of the section sits on.
  *  3. Inside it all along was a ring of photos. They show first as tiny
  *     coloured specks within the sphere's outline, then spread and grow as
- *     the camera flies into them, and keep turning slowly in 3D, nearer
- *     ones larger. The story plays out in the middle one paragraph at a
+ *     the camera flies into them, and keep turning slowly round the copy,
+ *     evenly spaced. The story plays out in the middle one paragraph at a
  *     time, and the page ends on a contact screen.
  *
  * How the pieces split:
@@ -25,13 +25,14 @@ import { RUNNER_FRAMES } from "../components/runner";
  *  - **Dust is one draw call.** Lighting and the dissolve are computed in
  *    the vertex shader from a single uniform; each point carries its own
  *    threshold, so it thins out unevenly instead of fading as a sheet.
- *  - **Photos are DOM, projected by hand.** Each has a 3D position on a
- *    tilted ring; every frame it's rotated and perspective-projected in a
- *    few lines of maths, and the result written as a transform. That keeps
- *    them sharp, round and hoverable while still moving as a 3D object.
- *  - **The ring orbits around the words, not through them.** It turns
- *    mostly about the view axis, so photos circle the copy rather than
- *    sweeping across it; any that do drift behind it are dimmed.
+ *  - **Photos are DOM, placed by hand.** Every frame each one's spot on
+ *    the ring is worked out in a few lines of maths and written as a
+ *    transform. That keeps them sharp, round and hoverable.
+ *  - **The ring orbits around the words, not through them.** It's a flat
+ *    loop in the plane of the screen, and every photo is placed the same
+ *    distance from its neighbours, wherever it is on the loop
+ *    and whatever the screen shape. Any that drift behind the copy are
+ *    dimmed.
  *
  * Driven by real document scroll through useScrollProgressRef — the single
  * timeline every section on this page reads.
@@ -91,10 +92,6 @@ const RADIUS = 2.2;
 // Photo ring: virtual camera distance at the start and end of the fly-in.
 const CLOUD_FAR = 9;
 const CLOUD_NEAR = 2.3;
-// Gentle tilt: enough depth that near photos are bigger than far ones,
-// little enough that the ring still reads as a circle from the front.
-const RING_TILT_X = 0.28;
-const RING_TILT_Y = 0.18;
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -102,11 +99,6 @@ const smoothstep = (e0, e1, x) => {
   const t = clamp01((x - e0) / (e1 - e0));
   return t * t * (3 - 2 * t);
 };
-
-function hash(i, seed) {
-  const n = Math.sin(i * 127.1 + seed * 311.7) * 43758.5453;
-  return n - Math.floor(n);
-}
 
 const dustVertex = /* glsl */ `
   uniform float uFade;
@@ -546,8 +538,6 @@ export default function About() {
   const stackRef = useRef(null);
   const mountRef = useRef(null);
   const titleRef = useRef(null);
-  const metaRef = useRef(null);
-  const hintRef = useRef(null);
   const coreRef = useRef(null);
   const stagesRef = useRef(null);
   const bubbleRefs = useRef([]);
@@ -670,20 +660,76 @@ export default function About() {
     scene.add(dust);
 
     // -------------------------------------------------------------
-    // Photo ring — 3D positions, projected by hand each frame.
+    // Photo ring — placed by hand each frame.
     // -------------------------------------------------------------
     const n = PHOTOS.length;
-    const ring = PHOTOS.map((_, i) => {
-      const a = (i / n) * Math.PI * 2 + (hash(i, 3) - 0.5) * 0.5;
-      const r = 0.92 + hash(i, 5) * 0.1;
-      return {
-        x: Math.cos(a) * r,
-        y: Math.sin(a) * r,
-        z: (hash(i, 7) - 0.5) * 0.3,
-        dim: 1, // eased: dims while passing behind the copy
-        live: false,
-      };
-    });
+    const ring = PHOTOS.map(() => ({
+      dim: 1, // eased: dims while passing behind the copy
+      live: false,
+    }));
+
+    // The loop's shape on screen (a circle, or a tall oval on a portrait
+    // phone) and an arc-length table for it. Equal steps of *angle* bunch
+    // photos up at the ends of an oval, so they're placed by distance
+    // instead — see placeRing.
+    let ringW = 1;
+    let ringH = 1;
+    const ARC_STEPS = 360;
+    const arcAngle = new Float32Array(ARC_STEPS + 1);
+    const arcLen = new Float32Array(ARC_STEPS + 1);
+    const buildArc = () => {
+      let total = 0;
+      let px = ringW, py = 0;
+      for (let k = 0; k <= ARC_STEPS; k++) {
+        const a = (k / ARC_STEPS) * Math.PI * 2;
+        const x = Math.cos(a) * ringW, y = Math.sin(a) * ringH;
+        total += Math.hypot(x - px, y - py);
+        arcAngle[k] = a;
+        arcLen[k] = total;
+        px = x; py = y;
+      }
+      for (let k = 0; k <= ARC_STEPS; k++) arcLen[k] /= total;
+    };
+    // Fraction of the way round (0..1, by distance) -> unit-loop point.
+    const pointAt = (u) => {
+      u -= Math.floor(u);
+      let lo = 0, hi = ARC_STEPS;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (arcLen[mid] < u) lo = mid; else hi = mid;
+      }
+      const t = (u - arcLen[lo]) / (arcLen[hi] - arcLen[lo] || 1);
+      const a = lerp(arcAngle[lo], arcAngle[hi], t);
+      return [Math.cos(a), Math.sin(a)];
+    };
+    // Where each photo sits, as fractions round the loop, starting from
+    // u0. Every neighbour the same straight-line distance apart: even
+    // spacing *along* an oval still looks uneven where it bends hardest, so
+    // this finds the one gap that, stepped n times, comes back round to the
+    // start exactly. On a circle it's simply equal angles.
+    const slots = new Float32Array(n);
+    const stepFrom = (u, gap) => {
+      const [ax, ay] = pointAt(u);
+      let lo = 0, hi = 0.5;
+      for (let k = 0; k < 18; k++) {
+        const mid = (lo + hi) / 2;
+        const [bx, by] = pointAt(u + mid);
+        if (Math.hypot((bx - ax) * ringW, (by - ay) * ringH) < gap) lo = mid; else hi = mid;
+      }
+      return u + (lo + hi) / 2;
+    };
+    const placeRing = (u0) => {
+      let lo = 0, hi = 2 * Math.max(ringW, ringH);
+      for (let k = 0; k < 18; k++) {
+        const gap = (lo + hi) / 2;
+        let u = u0;
+        for (let i = 0; i < n; i++) u = stepFrom(u, gap);
+        if (u - u0 < 1) lo = gap; else hi = gap;
+      }
+      const gap = (lo + hi) / 2;
+      let u = u0;
+      for (let i = 0; i < n; i++) { slots[i] = u; u = stepFrom(u, gap); }
+    };
 
     let camStart = 9;
     let camEnd = 4;
@@ -705,6 +751,19 @@ export default function About() {
 
       baseSize = 74 * Math.min(1.1, Math.max(0.7, Math.min(width, height) / 850));
       box = stagesRef.current?.getBoundingClientRect() ?? null;
+
+      // A true circle around the copy, sized off the short side so it fits
+      // the screen. A portrait phone has no room for a circle *and*
+      // readable text inside it, so there it's a tall oval, above and below
+      // the words. Either way it stays clear of the edges (with headroom
+      // for the 1.16x hover scale), so nothing ever gets pushed in and
+      // breaks the spacing.
+      const edge = (baseSize / 2) * 1.16 + 12;
+      const portrait = width < height;
+      const ringR = Math.min(width, height) * 0.34;
+      ringW = Math.min(portrait ? width * 0.44 : ringR, width / 2 - edge);
+      ringH = Math.min(portrait ? height * 0.34 : ringR, height / 2 - edge - 36);
+      buildArc();
     };
 
     // Each photo's average colour, for its speck and glow.
@@ -887,25 +946,19 @@ export default function About() {
       // photo is hovered, so it doesn't slide out from under the cursor.
       state.spinRate += ((hoverRef.current ? 0 : 1) - state.spinRate) * Math.min(1, dt * 4);
       state.spin += dt * 0.07 * state.spinRate;
-      const theta = state.spin + p * 1.4;
-      state.tx += (RING_TILT_X + state.py * 0.12 - state.tx) * Math.min(1, dt * 2);
-      state.ty += (RING_TILT_Y + state.px * 0.16 - state.ty) * Math.min(1, dt * 2);
-      const cT = Math.cos(theta), sT = Math.sin(theta);
-      const cX = Math.cos(state.tx), sX = Math.sin(state.tx);
-      const cY = Math.cos(state.ty), sY = Math.sin(state.ty);
-      const cx = width / 2;
-      const cy = height / 2;
-      // The ring's screen footprint: an ellipse filling most of the view.
-      // A true circle around the copy, as in the reference — sized off the
-      // short side so it fits the screen. A portrait phone has no room for
-      // a circle *and* readable text inside it, so there it stays a tall
-      // oval, above and below the words.
-      const portrait = width < height;
-      const ringR = Math.min(width, height) * 0.34;
-      const sx = portrait ? width * 0.44 : ringR;
-      const sy = portrait ? height * 0.34 : ringR;
+      // Turn, as a fraction of the way round.
+      const turn = (state.spin + p * 1.4) / (Math.PI * 2);
+      // A little drift toward the pointer: the whole ring moves together,
+      // so the spacing never changes.
+      state.tx += (state.px - state.tx) * Math.min(1, dt * 2);
+      state.ty += (state.py - state.ty) * Math.min(1, dt * 2);
+      // Flying in: the ring grows from a cluster to full size.
+      const f = CLOUD_NEAR / d;
+      const cx = width / 2 + state.tx * 10;
+      const cy = height / 2 + state.ty * 8;
       const appear = smoothstep(CLOUD[0], CLOUD[0] + 0.05, p);
       const live = s >= 0;
+      if (appear > 0.001) placeRing(turn);
 
       for (let i = 0; i < n; i++) {
         const b = ring[i];
@@ -916,17 +969,9 @@ export default function About() {
           if (b.live) { el.classList.remove("live"); b.live = false; }
           continue;
         }
-        // Spin about the view axis, then tilt — so the ring orbits the copy
-        // with real depth to it, near side bigger, far side smaller.
-        const x1 = b.x * cT - b.y * sT;
-        const y1 = b.x * sT + b.y * cT;
-        const y2 = y1 * cX - b.z * sX;
-        const z2 = y1 * sX + b.z * cX;
-        const x3 = x1 * cY + z2 * sY;
-        const z3 = -x1 * sY + z2 * cY;
-        const f = CLOUD_NEAR / (d - z3);
-        let x = cx + x3 * f * sx;
-        let y = cy + y2 * f * sy;
+        const [ux, uy] = pointAt(slots[i]);
+        const x = cx + ux * ringW * f;
+        const y = cy + uy * ringH * f;
 
         // A coloured speck while far, blooming into the photo as the camera
         // arrives among them.
@@ -936,16 +981,10 @@ export default function About() {
         // element is rasterised big and resampled, which softens the edge
         // until the circle stops looking like a circle. Drawn at its true
         // pixel size, the browser anti-aliases a clean round edge.
-        // Every photo the same size once arrived — depth only decides which
-        // one draws in front, so the ring reads as an even circle of equals.
+        // Every photo the same size once arrived, so the ring reads as an
+        // even circle of equals.
         const size = Math.max(4, Math.round(lerp(5, baseSize, bloom)));
         const half = size / 2;
-        // Never let a photo slide off the edge: half a circle cut by the
-        // viewport reads as a broken shape, not as something passing by.
-        // (Headroom for the 1.16x hover scale too.)
-        const edge = half * 1.16 + 12;
-        x = Math.min(width - edge, Math.max(edge, x));
-        y = Math.min(height - edge - 20, Math.max(edge + 36, y));
 
         // Dim anything passing behind the copy.
         let behind = false;
@@ -962,7 +1001,6 @@ export default function About() {
         el.style.filter = `brightness(${(b.dim * (1 - state.contact * 0.45)).toFixed(3)})`;
         el.style.width = el.style.height = `${size}px`;
         el.style.transform = `translate3d(${x - half}px, ${y - half}px, 0)`;
-        el.style.zIndex = String(Math.round(f * 100));
 
         const isLive = live && !behind && nearness > 0.95;
         if (isLive !== b.live) { el.classList.toggle("live", isLive); b.live = isLive; }
@@ -975,8 +1013,6 @@ export default function About() {
         titleRef.current.style.opacity = String(titleK);
         titleRef.current.style.transform = `translate3d(0, ${(1 - titleK) * -20}px, 0)`;
       }
-      if (metaRef.current) metaRef.current.style.opacity = String(titleK);
-      if (hintRef.current) hintRef.current.style.opacity = String((1 - smoothstep(0.01, 0.06, p)) * landed);
 
       if (stackRef.current) {
         // Opaque well before the camera arrives, so what's seen for most of
@@ -1038,15 +1074,6 @@ export default function About() {
               <span key={i} style={styles.headingLine}>{line}</span>
             ))}
           </h2>
-        </div>
-
-        <div ref={metaRef} className="about-meta" style={styles.metaRow}>
-          {ABOUT.meta.map((m, i) => (
-            <span key={m} style={styles.metaItem}>
-              {i > 0 && <span style={styles.dot}>·</span>}
-              {m}
-            </span>
-          ))}
         </div>
 
         <div
@@ -1140,8 +1167,6 @@ export default function About() {
           ))}
         </div>
 
-        <div ref={hintRef} style={styles.hint}>SCROLL TO DIVE IN</div>
-
         {open && (
           <div className="about-lightbox" onClick={() => setOpenIndex(null)}>
             <figure onClick={(e) => e.stopPropagation()}>
@@ -1190,11 +1215,4 @@ const styles = {
   },
   headingLine: { display: "block" },
   // Placement lives in about.css — it moves above the hint on a phone.
-  metaRow: { position: "absolute", display: "flex", gap: 10, fontSize: 10, letterSpacing: 1.6 },
-  metaItem: { color: "rgba(255,255,255,0.45)", display: "flex", gap: 10 },
-  dot: { opacity: 0.4 },
-  hint: {
-    position: "absolute", bottom: 28, left: "50%", transform: "translateX(-50%)",
-    fontSize: 10, letterSpacing: 2, color: "rgba(255,255,255,0.4)",
-  },
 };

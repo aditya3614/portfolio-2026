@@ -17,19 +17,21 @@
 // inset (width, height, y) or full bleed across the card's image area. Either way the gallery owns playback, so it can
 // pause previews that are out of view and hold a still for reduced motion.
 // ---------------------------------------------------------------------------
-import { createRepoAtlasGlobe } from "./repoAtlasGlobe";
-import { createFlowJsMascot } from "./flowJsMascot";
+import { createRepoAtlasHero } from "./repoAtlasHero";
+import { createFlowJsHero } from "./flowJsHero";
 import { createPerfLabChart } from "./perfLabChart";
-import { createGlazeIcon } from "./glazeIcon";
+import { createGlazeHero } from "./glazeHero";
+import { createShippedHero } from "./shippedHero";
 import { videoPreview } from "./videoPreview";
 import harwariumIntro from "../../assets/previews/harwarium-intro.mp4";
 
 export const PREVIEWS = {
-  "repo-atlas-globe": createRepoAtlasGlobe,
-  "flowjs-mascot": createFlowJsMascot,
+  "repo-atlas-hero": createRepoAtlasHero,
+  "flowjs-hero": createFlowJsHero,
   // The landing intro, captured from the live site at 1440×900. Full bleed,
   // cropped to the top of the page, where the nav and headline animate in.
   "hardwarium-intro": videoPreview(harwariumIntro, { aspect: 16 / 10, still: 3, fill: true, focusY: 0 }),
   "perf-lab-chart": createPerfLabChart,
-  "glaze-icon": createGlazeIcon,
+  "glaze-hero": createGlazeHero,
+  "shipped-hero": createShippedHero,
 };

@@ -1,0 +1,236 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Portfolio Promo Edit</title>
+<style>
+  html, body { margin: 0; background: #000; overflow: hidden; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #000; perspective: 1600px; perspective-origin: 50% 50%; }
+  #stars, #fx { position: absolute; inset: 0; }
+  #world { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform-style: preserve-3d; }
+  .scr { position: absolute; background: #000; overflow: hidden; backface-visibility: hidden; will-change: transform; }
+  .scr img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .desk { width: 1920px; height: 1080px; margin: -540px 0 0 -960px; border-radius: 18px;
+    box-shadow: 0 0 0 1.5px rgba(255,255,255,0.16), 0 0 140px rgba(140,160,255,0.07); }
+  .phone { width: 430px; height: 931px; margin: -465px 0 0 -215px; border-radius: 58px;
+    box-shadow: 0 0 0 11px #0b0b0c, 0 0 0 12.5px rgba(255,255,255,0.22), 0 0 120px rgba(140,160,255,0.08); }
+  .full { border-radius: 0 !important; box-shadow: none !important; }
+  #hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Courier New', monospace; text-transform: uppercase; letter-spacing: 0.32em; font-size: 15px; }
+  .lbl { position: absolute; opacity: 0; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="stars" width="1920" height="1080"></canvas>
+  <div id="world"></div>
+  <canvas id="fx" width="1920" height="1080"></canvas>
+  <div id="hud"></div>
+</div>
+<script>
+// Deterministic editor: window.render(t) lays out the frame at t seconds.
+const W = 1920, H = 1080, P = 1600;
+const ACCENT = "#ff3b30";
+const T1 = 4.375, T2 = 8.4375, T3 = 12.1875, T4 = 15.0, T5 = 17.5, END = 20;
+
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, p) => a + (b - a) * p;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const eIO = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const eOut = (p) => 1 - Math.pow(1 - p, 3);
+const eIn = (p) => p * p * p;
+const eIO2 = (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+
+const COUNTS = window.COUNTS || {};
+const clipSrc = (name, f) => {
+  const n = COUNTS[name] || 1;
+  const i = clamp(Math.round(f), 0, n - 1) + 1;
+  return `clips/${name}/f${String(i).padStart(4, "0")}.jpg`;
+};
+
+// ---------- screens ----------
+const world = document.getElementById("world");
+const screens = {};
+function screen(id, kind) {
+  const el = document.createElement("div");
+  el.className = `scr ${kind}`;
+  const img = document.createElement("img");
+  el.appendChild(img); world.appendChild(el);
+  screens[id] = { el, img, src: "" };
+  return screens[id];
+}
+["deskA:desk", "phoneA:phone", "deskB:desk", "d0:desk", "d1:desk", "d2:desk", "d3:desk", "d4:desk",
+ "deskC:desk", "phoneC:phone", "deskD:desk", "deskD2:desk", "deskE:desk", "phoneE:phone"].forEach((s) => { const [id, k] = s.split(":"); screen(id, k); });
+
+const pending = [];
+function show(id, src, tf, { opacity = 1, blur = 0, full = false, bright = 1 } = {}) {
+  const s = screens[id];
+  s.el.style.display = "block";
+  s.el.style.transform = tf;
+  s.el.style.opacity = opacity;
+  s.el.style.filter = (blur > 0.3 ? `blur(${blur.toFixed(1)}px) ` : "") + (bright !== 1 ? `brightness(${bright.toFixed(2)})` : "");
+  s.el.classList.toggle("full", full);
+  if (s.src !== src) { s.src = src; s.img.src = src; pending.push(s.img.decode().catch(() => {})); }
+}
+const hideAll = () => { for (const k in screens) screens[k].el.style.display = "none"; };
+
+// Orbit camera: look at target (tx,ty,tz) from distance d, yaw ry, pitch rx, roll rz.
+function camera({ tx = 0, ty = 0, tz = 0, ry = 0, rx = 0, rz = 0, d = 0 }) {
+  world.style.transform = `rotateZ(${rz}deg) translateZ(${-d}px) rotateX(${rx}deg) rotateY(${ry}deg) translate3d(${-tx}px, ${-ty}px, ${-tz}px)`;
+  cam = { tx, ty, tz, ry, rx, rz, d };
+}
+let cam = {};
+
+// ---------- stars (parallax off the camera's yaw/pitch) ----------
+const sx = document.getElementById("stars").getContext("2d");
+let seed = 11; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+const STARS = Array.from({ length: 900 }, () => ({ x: rnd() * 5000, y: rnd() * 3000, z: 0.2 + rnd() * 0.8, b: rnd(), tw: rnd() * 6.3 }));
+function stars(t, alpha) {
+  sx.clearRect(0, 0, W, H);
+  if (alpha <= 0) return;
+  for (const s of STARS) {
+    const x = ((s.x - cam.ry * 26 * s.z - t * 6 * s.z) % 5000 + 5000) % 5000 - 1540;
+    const y = ((s.y + cam.rx * 26 * s.z) % 3000 + 3000) % 3000 - 960;
+    if (x < 0 || x > W || y < 0 || y > H) continue;
+    const a = alpha * (0.25 + 0.6 * s.b * s.z) * (0.75 + 0.25 * Math.sin(t * 2 + s.tw));
+    sx.fillStyle = `rgba(255,255,255,${a})`;
+    sx.beginPath(); sx.arc(x, y, 0.5 + s.z * 1.3, 0, 6.283); sx.fill();
+  }
+}
+
+// ---------- fx: flashes, vignette, grain, letterbox ----------
+const fx = document.getElementById("fx").getContext("2d");
+const GRAIN = Array.from({ length: 6 }, () => {
+  const g = document.createElement("canvas"); g.width = g.height = 256;
+  const c = g.getContext("2d"), d = c.createImageData(256, 256);
+  for (let i = 0; i < d.data.length; i += 4) { const v = rnd() * 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; d.data[i + 3] = 255; }
+  c.putImageData(d, 0, 0); return g;
+});
+function effects(t) {
+  fx.clearRect(0, 0, W, H);
+  // exposure flash on the hard cuts
+  const flash = Math.max(0, 1 - Math.abs(t - T1) / 0.12) * 0.55 + Math.max(0, 1 - (t - (T5 - 0.08)) / 0.1) * (t > T5 - 0.08 && t < T5 ? 0.5 : 0);
+  if (flash > 0) { fx.fillStyle = `rgba(255,236,224,${flash})`; fx.fillRect(0, 0, W, H); }
+  // silence: the black beat before contact
+  const blk = t >= T5 ? 1 - eOut(prog(t, T5 + 0.3, T5 + 1.0)) : 0;
+  // final fade
+  const out = eIn(prog(t, 19.3, END));
+  const dark = Math.max(blk, out, 1 - eOut(prog(t, 0, 0.9)));
+  if (dark > 0) { fx.fillStyle = `rgba(0,0,0,${dark})`; fx.fillRect(0, 0, W, H); }
+  const g = fx.createRadialGradient(W / 2, H / 2, H * 0.42, W / 2, H / 2, H * 1.0);
+  g.addColorStop(0, "rgba(0,0,0,0)"); g.addColorStop(1, "rgba(0,0,0,0.55)");
+  fx.fillStyle = g; fx.fillRect(0, 0, W, H);
+  fx.save(); fx.globalAlpha = 0.05; fx.globalCompositeOperation = "overlay";
+  fx.fillStyle = fx.createPattern(GRAIN[Math.floor(t * 30) % 6], "repeat"); fx.fillRect(0, 0, W, H); fx.restore();
+}
+
+// ---------- HUD labels (the site's own mono voice) ----------
+const hud = document.getElementById("hud");
+function label(txt, style) { const d = document.createElement("div"); d.className = "lbl"; d.textContent = txt; Object.assign(d.style, style); hud.appendChild(d); return d; }
+const L = {
+  brand: label("Aditya Dave — Portfolio 2026", { left: "72px", top: "64px", color: "#d8d8d8" }),
+  ch1: label("01 — Selected work", { left: "72px", top: "64px", color: ACCENT }),
+  ch2: label("02 — Experience", { left: "72px", top: "64px", color: ACCENT }),
+  ch3: label("03 — About", { left: "72px", top: "64px", color: ACCENT }),
+  ch4: label("04 — Say hello", { left: "72px", top: "64px", color: ACCENT }),
+  sign: label("Aditya Dave  ·  Frontend engineer  ·  Bangalore", { left: "50%", bottom: "70px", transform: "translateX(-50%)", color: "#bdbdbd", fontSize: "16px" }),
+};
+function lbl(el, a) { el.style.opacity = clamp(a).toFixed(3); }
+const win = (t, a, b, fi = 0.35, fo = 0.35) => Math.min(prog(t, a, a + fi), 1 - prog(t, b - fo, b));
+
+// ---------- the edit ----------
+const R = 3400; // radius of the curved wall in scene B
+const arc = (deg) => `translateZ(${R}px) rotateY(${deg}deg) translateZ(${-R}px)`;
+const DETAILS = ["repo-atlas", "flowjs", "glaze", "hardwarium", "frontend-performance-lab"];
+const ARC_DEG = [-35, 35, 70, -70, 105];
+const WALL_D = 3500;
+
+async function render(t) {
+  hideAll();
+  let starA = 0;
+
+  if (t < T1) {
+    // A — two screens adrift; the camera swoops round and dives through the glass.
+    const p = eIO(prog(t, 0, 3.4));
+    const pd = eIO2(prog(t, 0, 3.5));
+    camera({
+      tx: lerp(520, 0, p), ty: lerp(-40, 0, p),
+      ry: lerp(-38, 0, p), rx: lerp(10, 0, p), rz: lerp(-4, 0, p),
+      d: t < 3.5 ? lerp(2700, 0, pd) : lerp(0, -140, eIn(prog(t, 3.5, T1))),
+    });
+    const f = t < 2.1 ? lerp(0, 44, t / 2.1) : lerp(44, 178, Math.pow(prog(t, 2.1, T1), 1.15));
+    const full = t > 3.5;
+    show("deskA", clipSrc("hero", f), "translate3d(0,0,0)", { full });
+    show("phoneA", clipSrc("m-hero", lerp(0, 150, t / T1)), "translate3d(1330px, 30px, -260px) rotateY(-16deg)", { opacity: 1 - prog(t, 2.6, 3.3) });
+    starA = 1 - prog(t, 2.8, 3.5);
+    lbl(L.brand, win(t, 0.5, 3.2, 0.5, 0.4));
+  } else if (t < T2) {
+    // B — the card flight, then pull back to a curved wall of project pages and whip away.
+    const settle = eOut(prog(t, T1, T1 + 1.2));
+    const back = eIO(prog(t, 6.3, 7.5));
+    const orbit = prog(t, 7.2, T2);
+    const whip = eIn(prog(t, 7.85, T2));
+    camera({
+      ry: lerp(0, -10, back) + lerp(0, 22, eIO2(prog(t, 7.2, 7.95))) + whip * 60,
+      rx: lerp(0, 5, back), rz: lerp(2.2, 0, settle) - whip * 3,
+      d: lerp(-170, 0, settle) + back * WALL_D,
+    });
+    const f = t < 6.5 ? lerp(0, 150, eOut(prog(t, T1, 6.5)) * 0.85 + prog(t, T1, 6.5) * 0.15) : lerp(150, 258, prog(t, 6.5, T2));
+    const wb = whip * 18;
+    show("deskB", clipSrc("projects", f), "translate3d(0,0,0)", { full: back < 0.02, blur: wb });
+    if (back > 0.01) DETAILS.forEach((slug, i) => show("d" + i, `clips/details/${slug}.jpg`, arc(ARC_DEG[i]), { opacity: eOut(prog(back, 0.15 + i * 0.08, 0.6 + i * 0.08)), blur: wb + 1.2 }));
+    starA = back;
+    lbl(L.ch1, win(t, T1 + 0.3, T2 - 0.3));
+  } else if (t < T3) {
+    // C — experience on desktop and phone; dolly past, then push into Juspay.
+    const arrive = eOut(prog(t, T2, T2 + 1.0));
+    const push = eIO(prog(t, 10.55, 11.35));
+    const drift = prog(t, T2, 10.6);
+    camera({
+      tx: lerp(lerp(760, 520, drift), 0, push), ty: lerp(30, 0, push),
+      ry: lerp(lerp(-60, -16, arrive) + drift * 6, 0, push), rx: lerp(5, 0, push), rz: lerp(lerp(3, -1.5, arrive), 0, push),
+      d: lerp(lerp(3000, 2100, arrive) - drift * 250, 0, push) + (t > 11.35 ? -eIO2(prog(t, 11.35, T3)) * 90 : 0),
+    });
+    const wb = (1 - eOut(prog(t, T2, T2 + 0.35))) * 16;
+    const f = t < 11.5 ? lerp(40, 300, prog(t, T2, 11.5)) : lerp(300, 385, prog(t, 11.5, T3));
+    show("deskC", clipSrc("experience", f), "translate3d(0,0,0)", { full: push > 0.98, blur: wb });
+    show("phoneC", clipSrc("m-experience", lerp(20, 250, prog(t, T2, 11.4))), "translate3d(1320px, 40px, 380px) rotateY(-14deg)", { blur: wb, opacity: 1 - prog(t, 10.9, 11.3) });
+    starA = 1 - push;
+    lbl(L.ch2, win(t, T2 + 0.3, T3 - 0.3));
+  } else if (t < T5) {
+    // D — About, full frame: globe dive → photo ring → name → the thesis on the swell.
+    let f, d = 0, rz = 0, ty = 0;
+    if (t < 13.35) { f = lerp(60, 205, eIn(prog(t, T3, 13.35)) * 0.6 + prog(t, T3, 13.35) * 0.4); d = -eIn(prog(t, T3, 13.35)) * 260; }
+    else if (t < 14.25) { const q = prog(t, 13.35, 14.25); f = lerp(395, 478, q); d = lerp(420, 0, eOut(q)); rz = lerp(5, 0, eOut(q)); }
+    else if (t < T4) { f = lerp(480, 530, prog(t, 14.25, T4)); d = -eIO2(prog(t, 14.25, T4)) * 70; }
+    else { const q = prog(t, T4, 17.2); f = lerp(598, 718, q); d = -70 - eIO2(q) * 420 - eIn(prog(t, 17.2, T5)) * 900; ty = lerp(0, 25, q); }
+    camera({ d, rz, ty });
+    const bright = 1 + eIn(prog(t, 17.25, T5)) * 1.2;
+    show("deskD", clipSrc("about", f), "translate3d(0,0,0)", { full: true, bright });
+    // a short dissolve across the dark middle of the dive
+    if (t >= 13.35 && t < 13.55) show("deskD2", clipSrc("about", 205), "translate3d(0,0,1px)", { full: true, opacity: 1 - prog(t, 13.35, 13.55) });
+    lbl(L.ch3, win(t, T3 + 0.3, 17.2));
+  } else {
+    // E — silence, then the invitation on both screens.
+    // starts full frame on the contact screen and drifts back to reveal the phone
+    const q = eIO2(prog(t, T5 + 0.25, END));
+    camera({ tx: lerp(0, 380, q), ty: 10 * q, ry: lerp(0, -12, q), rx: lerp(0, 2.5, q), rz: lerp(0, -0.8, q), d: lerp(-60, 1500, q) });
+    show("deskE", clipSrc("contact", lerp(0, 75, prog(t, T5, END))), "translate3d(0,0,0)", { full: q < 0.03 });
+    show("phoneE", clipSrc("m-contact", lerp(0, 75, prog(t, T5, END))), "translate3d(1320px, 30px, 260px) rotateY(-14deg)");
+    starA = 1;
+    lbl(L.ch4, win(t, T5 + 0.7, END, 0.5, 0.6));
+    lbl(L.sign, win(t, 18.5, END, 0.6, 0.6));
+  }
+  if (t >= T5 || t < T1) {} // (labels outside their scene stay hidden)
+  for (const k of ["brand", "ch1", "ch2", "ch3", "ch4", "sign"]) {
+    const active = { brand: t < T1, ch1: t >= T1 && t < T2, ch2: t >= T2 && t < T3, ch3: t >= T3 && t < T5, ch4: t >= T5, sign: t >= T5 }[k];
+    if (!active) lbl(L[k], 0);
+  }
+  stars(t, starA);
+  effects(t);
+  await Promise.all(pending.splice(0));
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+window.render = render;
+</script>
+</body>
+</html>

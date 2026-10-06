@@ -767,25 +767,7 @@
   from { opacity: 0; transform: scale(0.9); }
 }
 
-/* ------------------------------------------------------------------ */
-/* Meta row                                                            */
-/* ------------------------------------------------------------------ */
-
-/* Bottom-left beside the hint on a wide screen; stacked above it on a
-   phone, where the two would otherwise run into each other. */
-.about-meta {
-  left: 32px;
-  bottom: 28px;
-}
-
 @media (max-width: 700px) {
-  .about-meta {
-    left: 0;
-    right: 0;
-    bottom: 50px;
-    justify-content: center;
-  }
-
   .about-link {
     width: 36px;
     height: 36px;

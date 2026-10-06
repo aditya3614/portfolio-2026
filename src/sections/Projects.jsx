@@ -238,11 +238,102 @@ export default function Projects() {
 
       ctx.textAlign = "right";
       ctx.fillStyle = "rgba(255,255,255,0.85)";
-      ctx.fillText("VIEW CASE STUDY ›", w - pad - 14, imgH + 100);
+      const label = "VIEW CASE STUDY ›";
+      const labelRight = w - pad - 14;
+      const labelW = ctx.measureText(label).width;
+      ctx.fillText(label, labelRight, imgH + 100);
 
       const tex = new THREE.CanvasTexture(canvas);
       tex.needsUpdate = true;
+      // Where the label sits, in the card's UV space (v runs bottom to top),
+      // padded to a comfortable target: a click inside it opens the case
+      // study, anywhere else on the card opens the live project.
+      const padX = 18, padY = 22;
+      tex.userData.caseZone = {
+        u0: (labelRight - labelW - padX) / w, u1: (labelRight + padX) / w,
+        v0: 1 - (imgH + 100 + padY) / h, v1: 1 - (imgH + 100 - 20 - padY) / h,
+        // The underline that answers hovering it: under the text, its width.
+        x: (labelRight - labelW / 2) / w, y: 1 - (imgH + 108) / h, width: labelW / w,
+      };
       return tex;
+    }
+
+    // -------------------------------------------------------------
+    // Focus frame: a hairline of light around the hovered card, with a
+    // soft glare travelling round it. Not the accent red, which is kept for
+    // small markers — this is closer to light catching a glass edge, white
+    // with a cool tint from About's palette. One shader on a plane slightly
+    // larger than the card: everything but the edge and its faint outer
+    // glow is fully transparent, and it's additive, so it only ever adds
+    // light to whatever is behind it.
+    // -------------------------------------------------------------
+    const FRAME_MARGIN = 10;
+    function makeFocusFrame() {
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uTime: { value: 0 },
+          uOpacity: { value: 0 },
+          uHalf: { value: new THREE.Vector2(cardW / 2, cardH / 2) },
+          uLine: { value: 0.9 * (narrow ? 0.8 : 1) },
+        },
+        vertexShader: `
+          varying vec2 vPos;
+          void main() {
+            vPos = position.xy;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform float uOpacity;
+          uniform vec2 uHalf;
+          uniform float uLine;
+          varying vec2 vPos;
+
+          void main() {
+            // Distance to the card's edge (negative inside, positive out).
+            vec2 q = abs(vPos) - uHalf;
+            float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+
+            // A crisp hairline on the edge, antialiased by screen-space size.
+            float aa = fwidth(d);
+            float line = 1.0 - smoothstep(uLine * 0.5, uLine * 0.5 + aa, abs(d));
+            // A faint bloom just outside it.
+            float glow = exp(-max(d, 0.0) / 3.5) * step(0.0, d);
+
+            // Position round the edge, 0..1, measured on the card squashed
+            // to a square so the glare keeps one pace along long and short
+            // sides alike.
+            float a = atan(vPos.y / uHalf.y, vPos.x / uHalf.x) / 6.2831853 + 0.5;
+            // Two glints, one strong and one faint opposite it, gliding
+            // round once every ~9 seconds.
+            float g1 = pow(0.5 + 0.5 * cos(6.2831853 * (a - uTime * 0.11)), 14.0);
+            float g2 = pow(0.5 + 0.5 * cos(6.2831853 * (a + 0.5 - uTime * 0.11)), 22.0) * 0.45;
+            float glare = g1 + g2;
+
+            // Colour drifts slowly round the edge: white through ice blue
+            // to a little lilac, never warm.
+            vec3 ice = vec3(0.74, 0.84, 1.0);
+            vec3 lilac = vec3(0.82, 0.78, 1.0);
+            vec3 tint = mix(ice, lilac, 0.5 + 0.5 * sin(6.2831853 * a * 2.0 + uTime * 0.4));
+            vec3 col = mix(tint, vec3(1.0), glare * 0.7);
+
+            float alpha = line * (0.16 + 0.84 * glare) + glow * glare * 0.35;
+            gl_FragColor = vec4(col * alpha * uOpacity, 1.0);
+          }
+        `,
+      });
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(cardW + FRAME_MARGIN * 2, cardH + FRAME_MARGIN * 2),
+        mat
+      );
+      mesh.position.z = 0.6;
+      // After the cards and their previews, so nothing paints over it.
+      mesh.renderOrder = 2;
+      return mesh;
     }
 
     // -------------------------------------------------------------
@@ -312,7 +403,21 @@ export default function Projects() {
         (rand(i + 5) - 0.5) * 0.4,
         (rand(i + 11) - 0.5) * 0.14
       );
-      mesh.userData = { project, baseScale: 1, hovered: false };
+      mesh.userData = { project, baseScale: 1, hovered: false, caseZone: tex.userData.caseZone };
+
+      const frame = makeFocusFrame();
+      mesh.add(frame);
+      mesh.userData.frame = frame;
+
+      const zone = tex.userData.caseZone;
+      const underline = new THREE.Mesh(
+        new THREE.PlaneGeometry(zone.width * cardW, 1.2 * cardScale),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false })
+      );
+      underline.position.set((zone.x - 0.5) * cardW, (zone.y - 0.5) * cardH, 0.5);
+      underline.renderOrder = 2;
+      mesh.add(underline);
+      mesh.userData.underline = underline;
 
       // A real project brings its own small animation into the image area
       // (see components/previews), which says how big it is and where it sits.
@@ -424,12 +529,37 @@ export default function Projects() {
     const raycaster = new THREE.Raycaster();
     const mouseVec = new THREE.Vector2();
     let hoveredMesh = null;
+    let hoveringCase = false;
 
-    const onClick = () => {
-      if (hoveredMesh) {
-        hoveredMesh.userData.pulse = 1;
-        navigate(`/work/${hoveredMesh.userData.project.slug}`);
-      }
+    // Which card is under a point (in -1..1 screen coords), and whether the
+    // point is on its VIEW CASE STUDY label.
+    const pick = (x, y) => {
+      mouseVec.set(x, y);
+      raycaster.setFromCamera(mouseVec, camera);
+      const hit = raycaster.intersectObjects(cardMeshes, false)[0];
+      if (!hit) return { mesh: null, onCase: false };
+      const z = hit.object.userData.caseZone;
+      const { x: u, y: v } = hit.uv;
+      return { mesh: hit.object, onCase: u >= z.u0 && u <= z.u1 && v >= z.v0 && v <= z.v1 };
+    };
+
+    // The card opens the live project; only its VIEW CASE STUDY label opens
+    // the case study. Placeholders have no live link, so the whole card
+    // leads to the case study. The pick is redone from the click itself
+    // rather than trusting the last hover, because a tap on a phone arrives
+    // without a mousemove before it.
+    const onClick = (e) => {
+      const rect = mount.getBoundingClientRect();
+      const { mesh, onCase } = pick(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -(((e.clientY - rect.top) / rect.height) * 2 - 1)
+      );
+      if (!mesh) return;
+      mesh.userData.pulse = 1;
+      const { project } = mesh.userData;
+      const live = project.links?.find((l) => l.label === "LIVE SITE")?.href;
+      if (live && !onCase) window.open(live, "_blank", "noopener,noreferrer");
+      else navigate(`/work/${project.slug}`);
     };
     mount.addEventListener("click", onClick);
 
@@ -484,10 +614,8 @@ export default function Projects() {
       });
 
       // raycast for hover
-      mouseVec.set(state.mouseX, -state.mouseY);
-      raycaster.setFromCamera(mouseVec, camera);
-      const hits = raycaster.intersectObjects(cardMeshes);
-      const newHovered = hits.length > 0 ? hits[0].object : null;
+      const { mesh: newHovered, onCase } = pick(state.mouseX, -state.mouseY);
+      hoveringCase = onCase;
 
       if (newHovered !== hoveredMesh) {
         if (hoveredMesh) hoveredMesh.userData.hovered = false;
@@ -512,16 +640,15 @@ export default function Projects() {
         m.scale.setScalar(m.userData.baseScale);
         m.material.opacity = m.userData.hovered ? 1 : 0.96;
       });
-      // outline emulation: tint hovered card border via a thin red frame overlay
+      // The focus frame fades in on the hovered card while its glare keeps
+      // travelling; with reduced motion the glare holds still. The case
+      // study label gets its underline only while it's the thing pointed at.
       cardMeshes.forEach((m) => {
-        if (!m.userData.frame) {
-          const frameGeo = new THREE.EdgesGeometry(new THREE.PlaneGeometry(cardW + 4, cardH + 4));
-          const frameMat = new THREE.LineBasicMaterial({ color: ACCENT, transparent: true, opacity: 0 });
-          const frame = new THREE.LineSegments(frameGeo, frameMat);
-          m.add(frame);
-          m.userData.frame = frame;
-        }
-        m.userData.frame.material.opacity += ((m.userData.hovered ? 0.9 : 0) - m.userData.frame.material.opacity) * 0.2;
+        const u = m.userData.frame.material.uniforms;
+        u.uOpacity.value += ((m.userData.hovered ? 1 : 0) - u.uOpacity.value) * Math.min(1, dt * 6);
+        u.uTime.value = reducedMotion ? 1.5 : state.elapsed || 0;
+        const line = m.userData.underline.material;
+        line.opacity += ((m.userData.hovered && hoveringCase ? 0.85 : 0) - line.opacity) * Math.min(1, dt * 12);
       });
 
       // pixel-pet walk cycle — toggles all sprites together every ~350ms,
@@ -600,6 +727,9 @@ export default function Projects() {
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement);
       cardMeshes.forEach((m) => {
         m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose();
+        for (const extra of [m.userData.frame, m.userData.underline]) {
+          extra.geometry.dispose(); extra.material.dispose();
+        }
         const pet = m.userData.pet;
         if (pet) { pet.geo.dispose(); pet.mat.dispose(); pet.tex.dispose(); }
         const preview = m.userData.preview;

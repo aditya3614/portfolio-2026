@@ -1,10 +1,9 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-// import Hero from "./sections/Hero";
-// import PalaceHero from "./sections/PalaceHero";
-// import SunHero from "./sections/SunHero";
 import RingHero from "./sections/RingHero";
 import Projects from "./sections/Projects";
-import Experience from "./sections/Experience";
+// The journey version of Experience — kept, but not rendered.
+// import Experience from "./sections/Experience";
+import ExperienceWheel from "./sections/ExperienceWheel";
 import About from "./sections/About";
 import ProjectDetail from "./pages/ProjectDetail";
 
@@ -14,12 +13,10 @@ import ProjectDetail from "./pages/ProjectDetail";
 function Home() {
   return (
     <>
-      {/* <Hero /> */}
-      {/* <PalaceHero /> */}
-      {/* <SunHero /> */}
       <RingHero />
       <Projects />
-      <Experience />
+      {/* <Experience /> */}
+      <ExperienceWheel />
       <About />
     </>
   );

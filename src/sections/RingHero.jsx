@@ -29,13 +29,19 @@ import '../ring-hero.css'
 
 const SCROLL_LENGTH_VH = 350
 
-// Ring profile: a superellipse swept around the y axis. Close to an
-// ellipse (exponent near 1), so the band is fat and soft-shouldered — hard
-// corners reflect as thin creases, which reads as outline, not glass.
-const RING_R = 1.0 // centre of the band
-const RING_HALF_T = 0.17 // half the wall thickness
-const RING_HALF_H = 0.4 // half the band's height
-const RING_ROUND = 0.72 // superellipse exponent — lower is boxier
+// Ring profile: an accretion disc rather than a band — wide and flat, fat
+// at the inner lip where it falls into the hole and thinning out toward a
+// fine outer edge. Both edges stay rounded: hard corners reflect as thin
+// creases, which reads as outline, not glass.
+const RING_IN = 0.8 // inner lip — the edge of the hole
+const RING_OUT = 1.45 // outer edge
+const RING_HALF_H = 0.3 // thickness scale; the disc peaks at ~0.18 either side
+const RING_TAPER = 0.85 // how much thinner the outer edge is than the inner
+const RING_R = RING_IN + (RING_OUT - RING_IN) * 0.22 // the disc's thickest ring, where the filament runs
+
+// Half the disc's thickness at u (0 = inner lip, 1 = outer edge): an
+// ellipse's rounded ends, leaning its bulk toward the hole.
+const bandHalfHeight = (u) => RING_HALF_H * 2 * Math.sqrt(u * (1 - u)) * Math.pow(1 - RING_TAPER * u, 1.6)
 
 // At rest the ring is tipped back and turned, like the reference.
 const REST_X = 0.88
@@ -44,10 +50,19 @@ const FACE_X = Math.PI / 2 // axis pointing straight down the camera
 
 const FOV = 35
 const DUST_COUNT = 1600
-const GLITTER_COUNT = 1400 // specks suspended inside the glass band itself
+const GLITTER_COUNT = 2600 // specks suspended inside the glass disc itself — it has a lot more volume than the old band
 const INTRO = 2.6 // seconds for the lights to come up
 const SMOOTHING = 6
 const EXPOSURE = 1.7
+
+// Two drifting glints, one cool white and one warm orange: small lights on
+// slow, out-of-step orbits in front of the ring, so a soft highlight creeps
+// across the glass now and then. Kept dim on purpose — a glint, not a shine.
+// [colour, intensity, speed (rad/s), phase, orbit radius x/y, depth]
+const GLINTS = [
+  [0xffffff, 0.3, 0.19, 0.4, 2.4, 1.7, 2.2],
+  [0xff9a4a, 0.45, -0.13, 2.6, 2.1, 1.9, 1.8],
+]
 
 // The studio's resting angle around the ring. Picked by sweeping the full
 // turn: this is where the form reads best — soft shading across the body,
@@ -81,14 +96,15 @@ const easeOut = (t) => 1 - Math.pow(1 - clamp01(t), 3)
 
 function ringGeometry() {
   const pts = []
-  const n = 160
-  const sp = (v) => Math.sign(v) * Math.pow(Math.abs(v), RING_ROUND)
-  // Counter-clockwise in (r, y): up the outer wall first. LatheGeometry
-  // derives its normals from the profile's direction, and this way round
-  // they point out of the glass.
+  const n = 200
+  // Counter-clockwise in (r, y): up from the outer edge, over the top to the
+  // inner lip, back underneath. LatheGeometry derives its normals from the
+  // profile's direction, and this way round they point out of the glass.
+  // Stepping by angle packs the samples into the tight rounded edges.
   for (let i = 0; i <= n; i++) {
     const t = (i / n) * Math.PI * 2
-    pts.push(new THREE.Vector2(RING_R + RING_HALF_T * sp(Math.cos(t)), RING_HALF_H * sp(Math.sin(t))))
+    const u = (1 + Math.cos(t)) / 2
+    pts.push(new THREE.Vector2(lerp(RING_IN, RING_OUT, u), Math.sign(Math.sin(t)) * bandHalfHeight(u)))
   }
   return new THREE.LatheGeometry(pts, 240)
 }
@@ -135,7 +151,7 @@ function buildStudio() {
     m.lookAt(0, 0, 0)
     scene.add(m)
   }
-  panel(18, 12, 0xd8e6ff, 3, [-5, 5, 4]) // big cool softbox, up-left and in front — shades the body's form
+  panel(18, 12, 0xd8e6ff, 1.2, [-5, 5, 4]) // big cool softbox, up-left and in front — kept low: the disc's broad top face catches all of it and goes milky
   panel(7, 15, 0xa9c4ff, 3.2, [-7, -1, -2]) // tall icy blue from behind-left — the luminous left shoulder
   // Mirrored across the studio on purpose: at the resting angle (about half
   // a turn) this one lands behind the ring's left shoulder and lights it.
@@ -314,9 +330,8 @@ const placeDust = () => {
 // Inside the band's cross-section, kept clear of the surface so no speck
 // ever pokes through.
 const placeGlitter = () => {
-  const rho = Math.sqrt(Math.random()) * 0.72
-  const phi = Math.random() * Math.PI * 2
-  return [RING_R + RING_HALF_T * rho * Math.cos(phi), RING_HALF_H * rho * Math.sin(phi)]
+  const u = 0.06 + Math.random() * 0.86
+  return [lerp(RING_IN, RING_OUT, u), (Math.random() * 2 - 1) * 0.72 * bandHalfHeight(u)]
 }
 
 export default function RingHero() {
@@ -357,7 +372,7 @@ export default function RingHero() {
       clearcoat: 0.35,
       clearcoatRoughness: 0.12,
       envMap: envTex,
-      envMapIntensity: 1.25,
+      envMapIntensity: 0.8, // lower than the old band needed: the flat disc shows far more reflecting surface
       side: THREE.DoubleSide,
     })
 
@@ -395,7 +410,7 @@ export default function RingHero() {
       uniforms: {
         uSpin: { value: 0 },
         uTime: { value: 0 },
-        uIntensity: { value: 1 },
+        uIntensity: { value: 1.5 }, // brighter than the dust: it has to read through the glass
         uPix: { value: 1 },
         uHeart: { value: HEART_ANGLE },
       },
@@ -441,6 +456,14 @@ export default function RingHero() {
     glitter.frustumCulled = false
     pivot.add(glitter)
     scene.add(pivot)
+
+    // The glass is the only lit material (the glow, dust and glitter are
+    // shaders that ignore lights), so these touch nothing else.
+    const glints = GLINTS.map(([color, intensity]) => {
+      const light = new THREE.PointLight(color, intensity, 0, 2)
+      scene.add(light)
+      return light
+    })
 
     const composer = new EffectComposer(renderer)
     composer.addPass(new RenderPass(scene, camera))
@@ -559,6 +582,14 @@ export default function RingHero() {
       pivot.scale.setScalar(lerp(0.94, 1, intro))
       // Slides back to centre as it squares up, so the dive is dead ahead.
       pivot.position.set(lerp(restX, 0, align), lerp(restY, 0, align), 0)
+
+      // Each glint circles the ring's centre just in front of it, breathing
+      // in and out on its own clock so they never both flare at once.
+      GLINTS.forEach(([, intensity, speed, phase, rx, ry, z], i) => {
+        const a = t * speed + phase
+        glints[i].position.set(pivot.position.x + Math.cos(a) * rx, pivot.position.y + Math.sin(a) * ry, z)
+        glints[i].intensity = intensity * (0.55 + 0.45 * Math.sin(t * 0.37 + phase * 2))
+      })
 
       camera.position.set(0, 0, lerp(baseDist, 0.95, fly))
       camera.lookAt(0, 0, camera.position.z - 1)
