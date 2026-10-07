@@ -24,7 +24,7 @@ export const ABOUT = {
   story: [
     "Hi, I’m {Aditya Dave}.",
     "I believe there’s magic in software the kind that only happens when {mark|product}, {mark|design}, and {mark|engineering} work as one.",
-    "I’m a {underline|frontend engineer} who sits somewhere between design and code.",
+    "I’m a {underline|frontend engineer} who sits somewhere between design and code",
     "I take rough ideas, figure out how they should feel, and obsess over the details until it actually {circle|feels right}.",
     "This portfolio is basically a collection of things I’ve built {chase|while chasing that feeling}." 
     
@@ -90,7 +90,7 @@ export const CONTACT = {
   heading: "Let's build something\nthat feels right.",
   links: [
     { id: "instagram", label: "Instagram", href: "https://www.instagram.com/aditya_dave89/" },
-    { id: "x", label: "Twitter / X", href: "https://x.com/adityadave89" },
+    { id: "x", label: "Twitter /X ", href: "https://x.com/adityadave89" },
     { id: "linkedin", label: "LinkedIn", href: "https://www.linkedin.com/in/aditya-dave-aa68961b9/" },
     { id: "substack", label: "Substack", href: "https://substack.com/@adityadavee" },
     { id: "github", label: "GitHub", href: "https://github.com/aditya3614" },

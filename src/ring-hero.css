@@ -23,10 +23,11 @@
   top: 40px;
   left: 44px;
   margin: 0;
-  font-family: 'Geist', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-weight: 400;
   font-size: 14px;
-  letter-spacing: 0.42em;
+  line-height: 14px;
+  letter-spacing: 3.4px;
   color: #fff;
   pointer-events: none;
 }
@@ -123,8 +124,6 @@
   .ring-name {
     top: 28px;
     left: 24px;
-    font-size: 12px;
-    letter-spacing: 0.36em;
   }
 }
 

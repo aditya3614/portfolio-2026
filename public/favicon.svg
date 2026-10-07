@@ -1,22 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- An "A" with its crossbar taken out and replaced by a single sun: two
-       cream legs meeting at a sharp apex, and one warm point of light
-       hanging where the bar would be (the sun palette, hot core to rim).
-       Sits on the site's pitch-black ground so it reads the same in light
-       and dark browser chrome. -->
+  <!-- "Aᴰ" — a bold white A with a small superscript D (Aditya Dave), on a
+       black tile. The tile is barely lifted at the top-left and has a thin
+       lit edge so it holds its shape on a dark tab bar; the letters carry
+       a soft white-to-pearl gradient. -->
   <defs>
-    <radialGradient id="sun" cx="31" cy="40" r="4" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffe800"/>
-      <stop offset=".45" stop-color="#ffc400"/>
-      <stop offset="1" stop-color="#ff8a00"/>
-    </radialGradient>
-    <radialGradient id="glow" cx="32" cy="41" r="10" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ff8a00" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#ff4d0d" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#26262b"/>
+      <stop offset=".55" stop-color="#0b0b0d"/>
+      <stop offset="1" stop-color="#000"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity=".35"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#fff" stop-opacity=".18"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="10" y1="14" x2="50" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".6" stop-color="#f1f1f4"/>
+      <stop offset="1" stop-color="#c9cad1"/>
+    </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="#000"/>
-  <circle cx="32" cy="41" r="10" fill="url(#glow)"/>
-  <path d="M32 12 L48 50 H41.5 L32 27.4 L22.5 50 H16 Z" fill="#f4ede4"/>
-  <circle cx="32" cy="41" r="3.6" fill="url(#sun)"/>
+  <rect width="64" height="64" rx="14" fill="url(#tile)"/>
+  <rect x=".5" y=".5" width="63" height="63" rx="13.5" fill="none" stroke="url(#edge)"/>
+  <g fill="url(#ink)" fill-rule="evenodd" transform="translate(32 32) scale(1.1) translate(-31 -32)">
+    <!-- A: flat-cut top, left leg a touch lighter than the right -->
+    <path d="M22.5 16 H29.5 L42 48 H33 L30.27 41 H20.73 L18 48 H10 Z M25.5 28.8 L28.51 36.5 H22.49 Z"/>
+    <!-- superscript D, tucked in close with its top on the A's cap line -->
+    <path d="M43.5 16 H46.5 A5.5 5.5 0 0 1 46.5 27 H43.5 Z M46.2 18.6 H46.5 A2.9 2.9 0 0 1 46.5 24.4 H46.2 Z"/>
+  </g>
 </svg>

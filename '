@@ -1,0 +1,18 @@
+Plus Jakarta Sans for the hero name, new Aᴰ favicon
+
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# Author:    Aditya Dave <adityadave@Adityas-MacBook-Air.local>
+# Date:      Thu Oct 8 02:09:05 2026 +0530
+#
+# On branch main
+# Your branch is up to date with 'origin/main'.
+#
+# Changes to be committed:
+#	modified:   index.html
+#	modified:   public/apple-touch-icon.png
+#	modified:   public/favicon.svg
+#	modified:   src/data/about.js
+#	modified:   src/ring-hero.css
+#
